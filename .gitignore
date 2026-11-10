@@ -66,3 +66,4 @@ Thumbs.db
 .ipynb_checkpoints/
 notebooks/data/*
 !notebooks/data/gym_churn_01.csv
+!notebooks/data/gym_churn_cleaned.csv
