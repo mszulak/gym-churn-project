@@ -1,6 +1,6 @@
 # Gym Churn Prediction System
 
-Analytical system based on Bayesian statistics and machine learning, designed to early detect and prevent client rotation (churn) in gyms and fitness clubs. The project connects a modern web interface with an efficient backend, allowing for seamless upload of tabular data and real-time risk analysis.
+Analytical system based on Bayesian statistics and machine learning, designed to early detect and prevent client rotation (churn) in gyms and fitness clubs. The project connects a modern web interface with an efficient backend, allowing for upload of tabular data and deep data analysis.
 
 ## Architecture and Tech Stack
 
@@ -9,7 +9,7 @@ The project is developed in a monorepo architecture, enforcing a strict separati
 *   **Frontend:** Next.js & React (User interface and data visualization).
 *   **Backend:** FastAPI / Python 3.12 (REST API, file validation, routing).
 *   **Machine Learning:** NumPyro as the final probabilistic target, with scikit-learn used as a lightweight baseline for the MVP development stage.
-*   **Environment Management:** `uv` (Deterministic and lightning-fast Python package manager).
+*   **Environment Management:** `uv` (Rust based Python package manager).
 *   **Infrastructure:** Docker & Docker Compose (Containerization).
 
 *In upcoming iterations, the architecture will be extended with a PostgreSQL database and an asynchronous task queue (Celery + Redis) to handle computationally heavy Bayesian inferences.*
