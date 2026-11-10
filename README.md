@@ -31,6 +31,7 @@ gym-churn-project/
 ├── notebooks/           # Jupyter notebooks for EDA, research, and model prototyping
 ├── docker-compose.yml   # Services orchestration setup
 └── README.md            # Main documentation
+```
 
 ## Project Status (MVP Phase)
 
