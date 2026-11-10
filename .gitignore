@@ -59,3 +59,11 @@ Thumbs.db
 .idea/
 .vscode/
 *.log
+
+# =========================
+# JUPYTER & DATA
+# =========================
+.ipynb_checkpoints/
+notebooks/data/*
+!notebooks/data/gym_churn.csv
+
