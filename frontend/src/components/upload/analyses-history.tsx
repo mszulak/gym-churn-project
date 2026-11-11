@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  AlertCircle,
   AlertTriangle,
   CheckCircle2,
   Clock,
@@ -19,6 +20,7 @@ import {
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { AnalysisSummaryItem } from "@/lib/api";
+import { isAnalysisFailed, isAnalysisInProgress } from "@/lib/analysis";
 
 interface AnalysesHistoryListProps {
   items: AnalysisSummaryItem[];
@@ -57,6 +59,8 @@ export function AnalysesHistoryList({
       {items.map((item) => {
         const isSelected = item.id === selectedId;
         const isLoadingThis = item.id === loadingId;
+        const inProgress = isAnalysisInProgress(item.status);
+        const failed = isAnalysisFailed(item.status);
 
         return (
           <button
@@ -81,7 +85,7 @@ export function AnalysesHistoryList({
                     : "bg-secondary/70 text-muted-foreground ring-border group-hover:text-foreground",
                 )}
               >
-                {isLoadingThis ? (
+                {isLoadingThis || inProgress ? (
                   <Loader2 className="size-4 animate-spin" aria-hidden="true" />
                 ) : (
                   <FileSpreadsheet className="size-4" aria-hidden="true" />
@@ -100,11 +104,32 @@ export function AnalysesHistoryList({
                     </Badge>
                   ) : null}
 
-                  <span className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-background/60 px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
-                    <CheckCircle2
-                      className="size-3 text-primary"
-                      aria-hidden="true"
-                    />
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-[10px]",
+                      inProgress
+                        ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
+                        : failed
+                          ? "border-destructive/40 bg-destructive/10 text-destructive"
+                          : "border-border/70 bg-background/60 text-muted-foreground",
+                    )}
+                  >
+                    {inProgress ? (
+                      <Loader2
+                        className="size-3 animate-spin text-amber-400"
+                        aria-hidden="true"
+                      />
+                    ) : failed ? (
+                      <AlertCircle
+                        className="size-3 text-destructive"
+                        aria-hidden="true"
+                      />
+                    ) : (
+                      <CheckCircle2
+                        className="size-3 text-primary"
+                        aria-hidden="true"
+                      />
+                    )}
                     {item.status}
                   </span>
                 </div>
@@ -128,7 +153,9 @@ export function AnalysesHistoryList({
                 />
                 <span className="text-muted-foreground">Members:</span>
                 <span className="font-mono font-semibold text-foreground">
-                  {formatInteger(item.rows_count)}
+                  {inProgress && item.rows_count === 0
+                    ? "—"
+                    : formatInteger(item.rows_count)}
                 </span>
               </div>
 
@@ -139,7 +166,9 @@ export function AnalysesHistoryList({
                 />
                 <span className="text-rose-200/80">At-risk:</span>
                 <span className="font-mono font-semibold text-rose-300">
-                  {formatInteger(item.high_risk_count)}
+                  {inProgress || failed
+                    ? "—"
+                    : formatInteger(item.high_risk_count)}
                 </span>
               </div>
 
@@ -150,7 +179,9 @@ export function AnalysesHistoryList({
                 />
                 <span className="text-muted-foreground">Avg. risk:</span>
                 <span className="font-mono font-semibold text-foreground">
-                  {formatProbabilityPercent(item.avg_churn_probability)}
+                  {inProgress || failed
+                    ? "—"
+                    : formatProbabilityPercent(item.avg_churn_probability)}
                 </span>
               </div>
             </div>

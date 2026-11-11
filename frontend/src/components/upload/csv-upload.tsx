@@ -25,13 +25,23 @@ import {
 import { formatBytes, formatDelimiterLabel, formatInteger } from "@/lib/format";
 import { AUTH_ROUTES } from "@/lib/auth/constants";
 import type { UploadAnalysisResponse } from "@/lib/api";
+import {
+  isAnalysisFailed,
+  isAnalysisInProgress,
+} from "@/lib/analysis";
 import { CsvPreviewTable } from "./csv-preview-table";
 
 interface CsvUploadProps {
   onUploadSuccess?: (result: UploadAnalysisResponse) => void;
+  activeJobId?: string | null;
+  activeStatus?: string | null;
 }
 
-export function CsvUpload({ onUploadSuccess }: CsvUploadProps) {
+export function CsvUpload({
+  onUploadSuccess,
+  activeJobId,
+  activeStatus,
+}: CsvUploadProps) {
   const router = useRouter();
   const inputId = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -42,13 +52,15 @@ export function CsvUpload({ onUploadSuccess }: CsvUploadProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<CsvPreviewData | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [uploadSuccessFilename, setUploadSuccessFilename] = useState<string | null>(
-    null,
-  );
+  const [lastUploadedJob, setLastUploadedJob] = useState<{
+    id: string;
+    filename: string;
+    initialStatus: string;
+  } | null>(null);
 
   async function processFile(file: File) {
     setErrorMessage(null);
-    setUploadSuccessFilename(null);
+    setLastUploadedJob(null);
 
     const validationError = validateCsvFile(file);
     if (validationError) {
@@ -160,7 +172,14 @@ export function CsvUpload({ onUploadSuccess }: CsvUploadProps) {
       }
 
       const uploadedResult = payload as UploadAnalysisResponse;
-      setUploadSuccessFilename(uploadedResult.filename || selectedFile.name);
+      const resolvedId = uploadedResult.id ?? uploadedResult.job_id ?? "";
+      const resolvedFilename = uploadedResult.filename || selectedFile.name;
+
+      setLastUploadedJob({
+        id: resolvedId,
+        filename: resolvedFilename,
+        initialStatus: uploadedResult.status ?? "PENDING",
+      });
       setSelectedFile(null);
       setPreview(null);
       if (fileInputRef.current) {
@@ -176,6 +195,16 @@ export function CsvUpload({ onUploadSuccess }: CsvUploadProps) {
       setIsUploading(false);
     }
   }
+
+  const effectiveUploadStatus =
+    lastUploadedJob &&
+    activeJobId === lastUploadedJob.id &&
+    activeStatus
+      ? activeStatus
+      : lastUploadedJob?.initialStatus;
+
+  const isUploadProcessing = isAnalysisInProgress(effectiveUploadStatus);
+  const isUploadFailed = isAnalysisFailed(effectiveUploadStatus);
 
   return (
     <Card className="border-border/80 bg-card/80 shadow-xl backdrop-blur-sm">
@@ -237,22 +266,60 @@ export function CsvUpload({ onUploadSuccess }: CsvUploadProps) {
               </div>
             </label>
 
-            {uploadSuccessFilename ? (
-              <div
-                role="status"
-                className="flex items-center justify-between gap-3 rounded-xl border border-primary/35 bg-primary/10 p-3.5 text-xs text-primary"
-              >
-                <div className="flex items-center gap-2.5">
-                  <CheckCircle2 className="size-4 shrink-0" aria-hidden="true" />
-                  <span>
-                    Analysis for{" "}
-                    <strong className="font-mono font-semibold">
-                      {uploadSuccessFilename}
-                    </strong>{" "}
-                    completed and saved to your history.
-                  </span>
+            {lastUploadedJob ? (
+              isUploadProcessing ? (
+                <div
+                  role="status"
+                  className="flex items-center justify-between gap-3 rounded-xl border border-amber-500/35 bg-amber-500/10 p-3.5 text-xs text-amber-200"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Loader2
+                      className="size-4 shrink-0 animate-spin text-amber-400"
+                      aria-hidden="true"
+                    />
+                    <span>
+                      Analysis for{" "}
+                      <strong className="font-mono font-semibold text-amber-100">
+                        {lastUploadedJob.filename}
+                      </strong>{" "}
+                      has been queued ({effectiveUploadStatus}). Background
+                      worker is processing the file...
+                    </span>
+                  </div>
                 </div>
-              </div>
+              ) : isUploadFailed ? (
+                <div
+                  role="alert"
+                  className="flex items-center justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/10 p-3.5 text-xs text-destructive"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <AlertCircle className="size-4 shrink-0" aria-hidden="true" />
+                    <span>
+                      Background analysis for{" "}
+                      <strong className="font-mono font-semibold">
+                        {lastUploadedJob.filename}
+                      </strong>{" "}
+                      failed. Please check the CSV file structure and try again.
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div
+                  role="status"
+                  className="flex items-center justify-between gap-3 rounded-xl border border-primary/35 bg-primary/10 p-3.5 text-xs text-primary"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <CheckCircle2 className="size-4 shrink-0" aria-hidden="true" />
+                    <span>
+                      Analysis for{" "}
+                      <strong className="font-mono font-semibold">
+                        {lastUploadedJob.filename}
+                      </strong>{" "}
+                      completed and saved to your history.
+                    </span>
+                  </div>
+                </div>
+              )
             ) : null}
           </div>
         ) : (
@@ -314,8 +381,8 @@ export function CsvUpload({ onUploadSuccess }: CsvUploadProps) {
                   Run churn prediction in FastAPI
                 </p>
                 <p className="text-muted-foreground">
-                  The file will be analyzed and saved to PostgreSQL, and the Top 10
-                  at-risk members table below will update automatically.
+                  The file will be queued for background processing by the Celery
+                  worker, and results will appear automatically once completed.
                 </p>
               </div>
 
@@ -324,12 +391,12 @@ export function CsvUpload({ onUploadSuccess }: CsvUploadProps) {
                 size="lg"
                 onClick={handleSubmitToBackend}
                 disabled={isUploading}
-                className=" shrink-0 cursor-pointer font-semibold shadow-md shadow-primary/20"
+                className="shrink-0 cursor-pointer font-semibold shadow-md shadow-primary/20"
               >
                 {isUploading ? (
                   <>
                     <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                    Analyzing CSV...
+                    Uploading CSV...
                   </>
                 ) : (
                   <>

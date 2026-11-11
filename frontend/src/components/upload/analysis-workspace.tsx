@@ -18,12 +18,15 @@ import type {
 import {
   fromAnalysisDetail,
   fromUploadResponse,
+  isAnalysisInProgress,
   type ActiveAnalysisView,
 } from "@/lib/analysis";
 import { Card, CardContent } from "@/components/ui/card";
 import { CsvUpload } from "./csv-upload";
 import { AnalysisResultCard } from "./analysis-result";
 import { AnalysesHistoryList } from "./analyses-history";
+
+const POLL_INTERVAL_MS = 1500;
 
 export function AnalysisWorkspace() {
   const router = useRouter();
@@ -36,6 +39,42 @@ export function AnalysisWorkspace() {
     null,
   );
   const [historyError, setHistoryError] = useState<string | null>(null);
+
+  const refreshHistoryList = useCallback(async () => {
+    try {
+      const response = await fetch("/api/analyses", {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      if (response.status === 401) {
+        router.push(`${AUTH_ROUTES.login}?expired=1`);
+        router.refresh();
+        return;
+      }
+
+      const payload = await response.json();
+
+      if (!response.ok) {
+        const message =
+          payload && typeof payload.detail === "string"
+            ? payload.detail
+            : `Failed to fetch analyses list (${response.status}).`;
+        setHistoryError(message);
+        return;
+      }
+
+      const list = Array.isArray(payload)
+        ? (payload as AnalysisSummaryItem[])
+        : [];
+      setHistoryError(null);
+      setHistory(list);
+    } catch {
+      setHistoryError(
+        "Failed to connect to the server while fetching analyses history.",
+      );
+    }
+  }, [router]);
 
   const fetchAnalysisDetail = useCallback(
     async (jobId: string) => {
@@ -80,42 +119,6 @@ export function AnalysisWorkspace() {
     },
     [router],
   );
-
-  const refreshHistoryList = useCallback(async () => {
-    try {
-      const response = await fetch("/api/analyses", {
-        method: "GET",
-        cache: "no-store",
-      });
-
-      if (response.status === 401) {
-        router.push(`${AUTH_ROUTES.login}?expired=1`);
-        router.refresh();
-        return;
-      }
-
-      const payload = await response.json();
-
-      if (!response.ok) {
-        const message =
-          payload && typeof payload.detail === "string"
-            ? payload.detail
-            : `Failed to fetch analyses list (${response.status}).`;
-        setHistoryError(message);
-        return;
-      }
-
-      const list = Array.isArray(payload)
-        ? (payload as AnalysisSummaryItem[])
-        : [];
-      setHistoryError(null);
-      setHistory(list);
-    } catch {
-      setHistoryError(
-        "Failed to connect to the server while fetching analyses history.",
-      );
-    }
-  }, [router]);
 
   useEffect(() => {
     let cancelled = false;
@@ -192,9 +195,108 @@ export function AnalysisWorkspace() {
     };
   }, [router]);
 
+  const activeId = activeAnalysis?.id ?? null;
+  const activeStatus = activeAnalysis?.status ?? null;
+
+  // Poll `GET /api/analyses/{id}` every 1.5s while the active analysis is PENDING or PROCESSING.
+  useEffect(() => {
+    if (!activeId || !isAnalysisInProgress(activeStatus)) {
+      return;
+    }
+
+    let cancelled = false;
+    let isPolling = false;
+
+    const intervalId = setInterval(async () => {
+      if (cancelled || isPolling) {
+        return;
+      }
+      isPolling = true;
+
+      try {
+        const response = await fetch(
+          `/api/analyses/${encodeURIComponent(activeId)}`,
+          {
+            method: "GET",
+            cache: "no-store",
+          },
+        );
+
+        if (cancelled) return;
+
+        if (response.status === 401) {
+          router.push(`${AUTH_ROUTES.login}?expired=1`);
+          router.refresh();
+          return;
+        }
+
+        if (!response.ok) {
+          return;
+        }
+
+        const detail = (await response.json()) as AnalysisDetailResponse;
+        if (cancelled) return;
+
+        const nextView = fromAnalysisDetail(detail);
+        setActiveAnalysis((current) => {
+          if (current && current.id !== activeId) {
+            return current;
+          }
+          return nextView;
+        });
+
+        setHistory((prev) =>
+          prev.map((item) =>
+            item.id === detail.id
+              ? {
+                  ...item,
+                  status: detail.status,
+                  rows_count: detail.rows_count,
+                  high_risk_count: detail.high_risk_count,
+                  avg_churn_probability: detail.avg_churn_probability,
+                }
+              : item,
+          ),
+        );
+
+        if (!isAnalysisInProgress(detail.status)) {
+          clearInterval(intervalId);
+          void refreshHistoryList();
+        }
+      } catch {
+        // Ignore transient network errors during background polling and retry on next tick.
+      } finally {
+        isPolling = false;
+      }
+    }, POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [activeId, activeStatus, refreshHistoryList, router]);
+
   function handleUploadSuccess(uploaded: UploadAnalysisResponse) {
     const nowIso = new Date().toISOString();
-    setActiveAnalysis(fromUploadResponse(uploaded, nowIso));
+    const mapped = fromUploadResponse(uploaded, nowIso);
+    setActiveAnalysis(mapped);
+
+    if (mapped.id) {
+      setHistory((prev) => {
+        const summaryItem: AnalysisSummaryItem = {
+          id: mapped.id,
+          filename: mapped.filename,
+          status: mapped.status,
+          rows_count: mapped.rowsCount,
+          high_risk_count: mapped.highRiskCount,
+          avg_churn_probability: mapped.avgChurnProbability,
+          created_at: mapped.createdAt ?? nowIso,
+        };
+        const filtered = prev.filter((item) => item.id !== mapped.id);
+        return [summaryItem, ...filtered];
+      });
+    }
+
     void refreshHistoryList();
   }
 
@@ -223,7 +325,11 @@ export function AnalysisWorkspace() {
           </div>
         </div>
 
-        <CsvUpload onUploadSuccess={handleUploadSuccess} />
+        <CsvUpload
+          onUploadSuccess={handleUploadSuccess}
+          activeJobId={activeAnalysis?.id ?? null}
+          activeStatus={activeAnalysis?.status ?? null}
+        />
       </section>
 
       <section aria-labelledby="active-analysis-heading" className="space-y-3">

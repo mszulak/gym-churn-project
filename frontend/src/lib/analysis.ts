@@ -1,5 +1,6 @@
 import type {
   AnalysisDetailResponse,
+  AnalysisJobStatus,
   PredictionRecord,
   UploadAnalysisResponse,
 } from "./api";
@@ -7,12 +8,25 @@ import type {
 export interface ActiveAnalysisView {
   id: string;
   filename: string;
-  status: string;
+  status: AnalysisJobStatus;
   rowsCount: number;
   highRiskCount: number;
   avgChurnProbability: number;
   createdAt?: string;
   top10: PredictionRecord[];
+}
+
+export function isAnalysisInProgress(status: string | null | undefined): boolean {
+  const normalized = (status ?? "").toUpperCase();
+  return normalized === "PENDING" || normalized === "PROCESSING";
+}
+
+export function isAnalysisFailed(status: string | null | undefined): boolean {
+  return (status ?? "").toUpperCase() === "FAILED";
+}
+
+export function isAnalysisCompleted(status: string | null | undefined): boolean {
+  return (status ?? "").toUpperCase() === "COMPLETED";
 }
 
 const DERIVED_PREDICTION_KEYS = new Set([
@@ -82,20 +96,23 @@ export function normalizePredictionRecord(
 
 export function fromUploadResponse(
   response: UploadAnalysisResponse,
-  createdAtIso?: string,
+  fallbackCreatedAtIso?: string,
 ): ActiveAnalysisView {
   const top10Raw = Array.isArray(response.top_10_risk)
     ? response.top_10_risk.slice(0, 10)
     : [];
 
   return {
-    id: response.job_id,
+    id: response.id ?? response.job_id ?? "",
     filename: response.filename,
-    status: response.status,
-    rowsCount: response.rows,
-    highRiskCount: response.high_risk_count ?? 0,
-    avgChurnProbability: response.avg_churn_probability ?? 0,
-    createdAt: createdAtIso,
+    status: response.status ?? "PENDING",
+    rowsCount:
+      toNumberOrNull(response.rows_count) ??
+      toNumberOrNull(response.rows) ??
+      0,
+    highRiskCount: toNumberOrNull(response.high_risk_count) ?? 0,
+    avgChurnProbability: toNumberOrNull(response.avg_churn_probability) ?? 0,
+    createdAt: response.created_at || fallbackCreatedAtIso,
     top10: top10Raw.map((item, idx) => normalizePredictionRecord(item, idx)),
   };
 }
@@ -111,9 +128,9 @@ export function fromAnalysisDetail(
     id: detail.id,
     filename: detail.filename,
     status: detail.status,
-    rowsCount: detail.rows_count,
-    highRiskCount: detail.high_risk_count,
-    avgChurnProbability: detail.avg_churn_probability,
+    rowsCount: toNumberOrNull(detail.rows_count) ?? 0,
+    highRiskCount: toNumberOrNull(detail.high_risk_count) ?? 0,
+    avgChurnProbability: toNumberOrNull(detail.avg_churn_probability) ?? 0,
     createdAt: detail.created_at,
     top10: predictionsRaw.map((item, idx) =>
       normalizePredictionRecord(

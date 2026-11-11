@@ -1,4 +1,5 @@
 import {
+  AlertCircle,
   AlertTriangle,
   CalendarClock,
   CheckCircle2,
@@ -18,7 +19,11 @@ import {
   formatUncertaintyRange,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { ActiveAnalysisView } from "@/lib/analysis";
+import {
+  isAnalysisFailed,
+  isAnalysisInProgress,
+  type ActiveAnalysisView,
+} from "@/lib/analysis";
 
 interface AnalysisResultCardProps {
   analysis: ActiveAnalysisView;
@@ -72,10 +77,40 @@ function summarizeRawFeatures(
     });
 }
 
+function StatusBadge({ status }: { status: string }) {
+  if (isAnalysisInProgress(status)) {
+    return (
+      <Badge className="border-amber-500/40 bg-amber-500/15 font-mono text-[11px] text-amber-300 hover:bg-amber-500/15">
+        <Loader2 className="mr-1 size-3 animate-spin" aria-hidden="true" />
+        {status}
+      </Badge>
+    );
+  }
+
+  if (isAnalysisFailed(status)) {
+    return (
+      <Badge className="border-destructive/40 bg-destructive/15 font-mono text-[11px] text-destructive hover:bg-destructive/15">
+        <AlertCircle className="mr-1 size-3" aria-hidden="true" />
+        {status}
+      </Badge>
+    );
+  }
+
+  return (
+    <Badge className="bg-primary/20 font-mono text-[11px] text-primary hover:bg-primary/20">
+      <CheckCircle2 className="mr-1 size-3" aria-hidden="true" />
+      {status}
+    </Badge>
+  );
+}
+
 export function AnalysisResultCard({
   analysis,
   isLoading = false,
 }: AnalysisResultCardProps) {
+  const inProgress = isAnalysisInProgress(analysis.status);
+  const failed = isAnalysisFailed(analysis.status);
+
   return (
     <Card
       className={cn(
@@ -94,16 +129,13 @@ export function AnalysisResultCard({
                 <h3 className="font-heading text-base font-bold text-foreground sm:text-lg">
                   {analysis.filename}
                 </h3>
-                <Badge className="bg-primary/20 font-mono text-[11px] text-primary hover:bg-primary/20">
-                  <CheckCircle2 className="mr-1 size-3" aria-hidden="true" />
-                  {analysis.status}
-                </Badge>
+                <StatusBadge status={analysis.status} />
               </div>
               <p className="font-mono text-xs text-muted-foreground">
                 {analysis.createdAt
                   ? `Uploaded: ${formatDateTime(analysis.createdAt)} • `
                   : null}
-                ID: {analysis.id}
+                ID: {analysis.id || "—"}
               </p>
             </div>
           </div>
@@ -112,6 +144,14 @@ export function AnalysisResultCard({
             <div className="inline-flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary">
               <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
               Loading analysis...
+            </div>
+          ) : inProgress ? (
+            <div className="inline-flex items-center gap-2 rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-200">
+              <Loader2
+                className="size-3.5 animate-spin text-amber-400"
+                aria-hidden="true"
+              />
+              Processing in background...
             </div>
           ) : null}
         </div>
@@ -122,9 +162,17 @@ export function AnalysisResultCard({
               <span>Analyzed members</span>
               <Users className="size-4 text-primary" aria-hidden="true" />
             </div>
-            <p className="mt-2 font-heading text-2xl font-bold text-foreground">
-              {formatInteger(analysis.rowsCount)}
-            </p>
+            {inProgress && analysis.rowsCount === 0 ? (
+              <div className="mt-2 flex items-center gap-2">
+                <div className="h-8 w-24 animate-pulse rounded-md bg-secondary/80" />
+              </div>
+            ) : (
+              <p className="mt-2 font-heading text-2xl font-bold text-foreground">
+                {failed && analysis.rowsCount === 0
+                  ? "—"
+                  : formatInteger(analysis.rowsCount)}
+              </p>
+            )}
             <p className="mt-0.5 text-[11px] text-muted-foreground">
               Total records in CSV file
             </p>
@@ -135,9 +183,15 @@ export function AnalysisResultCard({
               <span>High-risk members</span>
               <AlertTriangle className="size-4 text-rose-400" aria-hidden="true" />
             </div>
-            <p className="mt-2 font-heading text-2xl font-bold text-rose-300">
-              {formatInteger(analysis.highRiskCount)}
-            </p>
+            {inProgress ? (
+              <div className="mt-2 flex items-center gap-2">
+                <div className="h-8 w-20 animate-pulse rounded-md bg-rose-500/20" />
+              </div>
+            ) : (
+              <p className="mt-2 font-heading text-2xl font-bold text-rose-300">
+                {failed ? "—" : formatInteger(analysis.highRiskCount)}
+              </p>
+            )}
             <p className="mt-0.5 text-[11px] text-rose-200/80">
               Require immediate retention action
             </p>
@@ -148,9 +202,17 @@ export function AnalysisResultCard({
               <span>Average churn risk</span>
               <Gauge className="size-4 text-amber-400" aria-hidden="true" />
             </div>
-            <p className="mt-2 font-heading text-2xl font-bold text-foreground">
-              {formatProbabilityPercent(analysis.avgChurnProbability)}
-            </p>
+            {inProgress ? (
+              <div className="mt-2 flex items-center gap-2">
+                <div className="h-8 w-24 animate-pulse rounded-md bg-secondary/80" />
+              </div>
+            ) : (
+              <p className="mt-2 font-heading text-2xl font-bold text-foreground">
+                {failed
+                  ? "—"
+                  : formatProbabilityPercent(analysis.avgChurnProbability)}
+              </p>
+            )}
             <p className="mt-0.5 text-[11px] text-muted-foreground">
               Average probability across the club
             </p>
@@ -165,13 +227,66 @@ export function AnalysisResultCard({
                 Top 10 Most At-Risk Members
               </h4>
             </div>
-            <span className="font-mono text-xs text-muted-foreground">
-              Showing {analysis.top10.length} of{" "}
-              {formatInteger(analysis.rowsCount)} members
-            </span>
+            {!inProgress && !failed ? (
+              <span className="font-mono text-xs text-muted-foreground">
+                Showing {analysis.top10.length} of{" "}
+                {formatInteger(analysis.rowsCount)} members
+              </span>
+            ) : null}
           </div>
 
-          {analysis.top10.length > 0 ? (
+          {inProgress ? (
+            <div
+              role="status"
+              aria-live="polite"
+              className="space-y-4 rounded-xl border border-amber-500/30 bg-background/60 p-6"
+            >
+              <div className="flex flex-col items-center justify-center gap-2 text-center">
+                <span className="flex size-11 items-center justify-center rounded-2xl border border-amber-500/35 bg-amber-500/10 text-amber-400">
+                  <Loader2 className="size-5 animate-spin" aria-hidden="true" />
+                </span>
+                <p className="font-heading text-sm font-semibold text-foreground">
+                  Calculating member churn predictions...
+                </p>
+                <p className="max-w-md text-xs text-muted-foreground">
+                  The Celery worker is analyzing your CSV file in the background
+                  (current status:{" "}
+                  <span className="font-mono font-semibold text-amber-300">
+                    {analysis.status}
+                  </span>
+                  ). Results will appear here automatically as soon as the job
+                  completes.
+                </p>
+              </div>
+
+              <div className="space-y-2 pt-2">
+                {Array.from({ length: 4 }).map((_, index) => (
+                  <div
+                    key={index}
+                    className="h-9 w-full animate-pulse rounded-lg bg-secondary/50"
+                  />
+                ))}
+              </div>
+            </div>
+          ) : failed ? (
+            <div
+              role="alert"
+              className="flex flex-col items-center justify-center gap-2 rounded-xl border border-destructive/40 bg-destructive/10 p-6 text-center"
+            >
+              <AlertCircle
+                className="size-6 text-destructive"
+                aria-hidden="true"
+              />
+              <p className="font-heading text-sm font-semibold text-destructive">
+                Analysis failed
+              </p>
+              <p className="max-w-md text-xs text-destructive/90">
+                The background worker encountered an error while processing this
+                CSV file. Please verify the file format and required columns,
+                then try uploading again.
+              </p>
+            </div>
+          ) : analysis.top10.length > 0 ? (
             <div className="overflow-x-auto rounded-xl border border-border/80 bg-background/60">
               <table className="w-full border-collapse text-left text-xs">
                 <thead>

@@ -8,7 +8,10 @@ const dateTimeFormatter = new Intl.DateTimeFormat("en-GB", {
   minute: "2-digit",
 });
 
-export function formatInteger(value: number): string {
+export function formatInteger(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return "0";
+  }
   return integerFormatter.format(value);
 }
 

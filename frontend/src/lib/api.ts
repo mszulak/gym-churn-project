@@ -36,6 +36,13 @@ export interface UserResponse {
   created_at: string;
 }
 
+export type AnalysisJobStatus =
+  | "PENDING"
+  | "PROCESSING"
+  | "COMPLETED"
+  | "FAILED"
+  | (string & {});
+
 export interface PredictionRecord {
   id?: string;
   client_index: number;
@@ -46,29 +53,29 @@ export interface PredictionRecord {
   raw_features: Record<string, unknown>;
 }
 
-export interface UploadAnalysisResponse {
-  job_id: string;
-  filename: string;
-  rows: number;
-  high_risk_count: number;
-  avg_churn_probability: number;
-  columns?: string[];
-  status: string;
-  top_10_risk: Array<Record<string, unknown>>;
-}
-
 export interface AnalysisSummaryItem {
   id: string;
   filename: string;
-  status: string;
+  status: AnalysisJobStatus;
   rows_count: number;
   high_risk_count: number;
   avg_churn_probability: number;
   created_at: string;
 }
 
+/**
+ * Response returned by `POST /api/upload` (202 Accepted `AnalysisJobPublic`),
+ * with optional fallback fields for legacy responses.
+ */
+export interface UploadAnalysisResponse extends AnalysisSummaryItem {
+  job_id?: string;
+  rows?: number;
+  columns?: string[];
+  top_10_risk?: Array<Record<string, unknown>>;
+}
+
 export interface AnalysisDetailResponse extends AnalysisSummaryItem {
-  predictions: PredictionRecord[];
+  predictions?: PredictionRecord[];
 }
 
 export class ApiError extends Error {
@@ -159,7 +166,11 @@ export async function apiFetch<T>(
 
   const requestHeaders = new Headers(headers);
   requestHeaders.set("Accept", "application/json");
-  if (body !== undefined && !(body instanceof FormData) && !requestHeaders.has("Content-Type")) {
+  if (
+    body !== undefined &&
+    !(body instanceof FormData) &&
+    !requestHeaders.has("Content-Type")
+  ) {
     requestHeaders.set("Content-Type", "application/json");
   }
   if (token) {
