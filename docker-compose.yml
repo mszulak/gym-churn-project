@@ -63,5 +63,15 @@ services:
     volumes:
       - ./backend/app:/app/app
       - ./local_storage:/app/local_storage
+
+  frontend:
+    build: ./frontend
+    container_name: gym_churn_framework
+    ports:
+      - "3000:3000"
+    environment:
+      API_URL: http://backend:8000
+    depends_on:
+      - backend
 volumes:
   postgres_data:

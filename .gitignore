@@ -25,6 +25,8 @@ celerybeat.pid
 *.db
 *.sqlite3
 local_storage/
+local_storage/uploads/*
+!local_storage/uploads/.gitkeep
 notebooks/.ipynb_checkpoints/
 
 # =========================
