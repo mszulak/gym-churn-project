@@ -1,29 +1,35 @@
-const numberFormatter = new Intl.NumberFormat("pl-PL");
+const integerFormatter = new Intl.NumberFormat("en-US");
 
-const dateTimeFormatter = new Intl.DateTimeFormat("pl-PL", {
+const dateTimeFormatter = new Intl.DateTimeFormat("en-GB", {
   day: "2-digit",
-  month: "2-digit",
+  month: "short",
   year: "numeric",
   hour: "2-digit",
   minute: "2-digit",
 });
 
-export function formatNumber(value: number): string {
-  return numberFormatter.format(value);
+export function formatInteger(value: number): string {
+  return integerFormatter.format(value);
 }
 
-/** Formatuje wartość ułamkową (0.0 – 1.0) jako procent, np. `0.742` -> `"74,2%"`. */
-export function formatPercent(probability: number | null | undefined, digits = 1): string {
-  if (probability === null || probability === undefined || Number.isNaN(probability)) {
+/**
+ * Formats a probability value (either `0.0–1.0` or `0–100`) as a percentage string.
+ */
+export function formatProbabilityPercent(
+  value: number | null | undefined,
+  fractionDigits = 1,
+): string {
+  if (value === null || value === undefined || Number.isNaN(value)) {
     return "—";
   }
-  return `${(probability * 100).toLocaleString("pl-PL", {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
+
+  const pct = value <= 1 && value >= 0 ? value * 100 : value;
+  return `${pct.toLocaleString("en-US", {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
   })}%`;
 }
 
-/** Formatuje przedział niepewności (`uncertainty_low` – `uncertainty_high`) jako procenty. */
 export function formatUncertaintyRange(
   low: number | null | undefined,
   high: number | null | undefined,
@@ -38,56 +44,60 @@ export function formatUncertaintyRange(
   ) {
     return "—";
   }
-  const lowStr = (low * 100).toLocaleString("pl-PL", {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
-  });
-  const highStr = (high * 100).toLocaleString("pl-PL", {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
-  });
-  return `${lowStr}% – ${highStr}%`;
+
+  return `${formatProbabilityPercent(low, 1)} – ${formatProbabilityPercent(high, 1)}`;
 }
 
-/** Formatuje liczbę dni z poprawną polską odmianą ("1 dzień" / "14 dni"). */
 export function formatDaysToChurn(days: number | null | undefined): string {
   if (days === null || days === undefined || Number.isNaN(days)) {
     return "—";
   }
+
   const rounded = Math.round(days);
-  return `${formatNumber(rounded)} ${rounded === 1 ? "dzień" : "dni"}`;
+  return `${formatInteger(rounded)} ${rounded === 1 ? "day" : "days"}`;
 }
 
-export function formatDateTime(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
+export function formatDateTime(isoString: string | null | undefined): string {
+  if (!isoString) {
+    return "—";
+  }
+
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) {
+    return isoString;
+  }
+
   return dateTimeFormatter.format(date);
 }
 
-export function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+
   const units = ["KB", "MB", "GB"];
   let size = bytes / 1024;
-  let unit = 0;
-  while (size >= 1024 && unit < units.length - 1) {
+  let unitIndex = 0;
+
+  while (size >= 1024 && unitIndex < units.length - 1) {
     size /= 1024;
-    unit++;
+    unitIndex++;
   }
-  return `${size.toLocaleString("pl-PL", { maximumFractionDigits: 1 })} ${units[unit]}`;
+
+  return `${size.toLocaleString("en-US", { maximumFractionDigits: 1 })} ${units[unitIndex]}`;
 }
 
-export function describeDelimiter(delimiter: string): string {
+export function formatDelimiterLabel(delimiter: string): string {
   switch (delimiter) {
     case ",":
-      return "przecinek ( , )";
+      return "Delimiter: comma (,)";
     case ";":
-      return "średnik ( ; )";
+      return "Delimiter: semicolon (;)";
     case "\t":
-      return "tabulator";
+      return "Delimiter: tab (TAB)";
     case "|":
-      return "kreska ( | )";
+      return "Delimiter: pipe (|)";
     default:
-      return `„${delimiter}”`;
+      return `Delimiter: "${delimiter}"`;
   }
 }

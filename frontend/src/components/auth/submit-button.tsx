@@ -1,33 +1,39 @@
 "use client";
 
 import { useFormStatus } from "react-dom";
-import { Loader2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Loader2, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-interface SubmitButtonProps extends Omit<React.ComponentProps<typeof Button>, "type"> {
-  pendingText: string;
+interface SubmitButtonProps {
+  idleLabel: string;
+  pendingLabel: string;
+  icon?: LucideIcon;
 }
 
-/** Przycisk submit świadomy stanu formularza (useFormStatus) — blokuje się i pokazuje spinner. */
-export function SubmitButton({ children, pendingText, className, ...props }: SubmitButtonProps) {
+export function SubmitButton({
+  idleLabel,
+  pendingLabel,
+  icon: Icon,
+}: SubmitButtonProps) {
   const { pending } = useFormStatus();
 
   return (
     <Button
       type="submit"
-      disabled={pending || props.disabled}
-      aria-busy={pending}
-      className={cn(className)}
-      {...props}
+      size="lg"
+      disabled={pending}
+      className="w-full cursor-pointer font-semibold shadow-sm shadow-primary/20"
     >
       {pending ? (
         <>
-          <Loader2 className="animate-spin" />
-          {pendingText}
+          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+          {pendingLabel}
         </>
       ) : (
-        children
+        <>
+          {Icon ? <Icon className="size-4" aria-hidden="true" /> : null}
+          {idleLabel}
+        </>
       )}
     </Button>
   );

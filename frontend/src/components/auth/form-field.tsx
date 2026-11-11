@@ -1,71 +1,110 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Eye, EyeOff, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 
-interface FormFieldProps extends Omit<React.ComponentProps<"input">, "id"> {
+interface FormFieldProps {
   name: string;
   label: string;
-  icon?: LucideIcon;
+  type?: "text" | "email" | "password";
+  placeholder?: string;
+  autoComplete?: string;
+  defaultValue?: string;
+  required?: boolean;
+  disabled?: boolean;
   error?: string;
   hint?: string;
+  icon?: LucideIcon;
 }
 
-/** Pole formularza z etykietą, ikoną i komunikatem błędu (powiązanym przez aria-describedby). */
 export function FormField({
   name,
   label,
-  icon: Icon,
+  type = "text",
+  placeholder,
+  autoComplete,
+  defaultValue,
+  required = true,
+  disabled = false,
   error,
   hint,
-  type = "text",
-  className,
-  ...props
+  icon: Icon,
 }: FormFieldProps) {
-  const [showPassword, setShowPassword] = useState(false);
+  const id = useId();
+  const errorId = `${id}-error`;
+  const hintId = `${id}-hint`;
   const isPassword = type === "password";
-  const id = `field-${name}`;
-  const describedBy = error ? `${id}-error` : hint ? `${id}-hint` : undefined;
+  const [showPassword, setShowPassword] = useState(false);
+
+  const resolvedType = isPassword ? (showPassword ? "text" : "password") : type;
 
   return (
-    <div className="grid gap-2">
-      <Label htmlFor={id}>{label}</Label>
+    <div className="space-y-1.5">
+      <label
+        htmlFor={id}
+        className="block text-xs font-medium tracking-wide text-foreground"
+      >
+        {label}
+      </label>
+
       <div className="relative">
-        {Icon && (
-          <Icon
-            aria-hidden
-            className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
-          />
-        )}
-        <Input
+        {Icon ? (
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-muted-foreground"
+          >
+            <Icon className="size-4" />
+          </span>
+        ) : null}
+
+        <input
           id={id}
           name={name}
-          type={isPassword && showPassword ? "text" : type}
-          aria-invalid={error ? true : undefined}
-          aria-describedby={describedBy}
-          className={cn("h-11 rounded-xl", Icon && "pl-9", isPassword && "pr-10", className)}
-          {...props}
+          type={resolvedType}
+          placeholder={placeholder}
+          autoComplete={autoComplete}
+          defaultValue={defaultValue}
+          required={required}
+          disabled={disabled}
+          aria-invalid={Boolean(error)}
+          aria-describedby={error ? errorId : hint ? hintId : undefined}
+          className={cn(
+            "flex h-10 w-full rounded-lg border bg-background/70 px-3.5 py-2 text-sm text-foreground transition-colors",
+            "placeholder:text-muted-foreground/60",
+            "focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/25 focus-visible:outline-none",
+            "disabled:cursor-not-allowed disabled:opacity-60",
+            Icon && "pl-10",
+            isPassword && "pr-10",
+            error
+              ? "border-destructive/70 focus-visible:border-destructive focus-visible:ring-destructive/25"
+              : "border-border/80 hover:border-border",
+          )}
         />
-        {isPassword && (
+
+        {isPassword ? (
           <button
             type="button"
-            onClick={() => setShowPassword((v) => !v)}
-            aria-label={showPassword ? "Ukryj hasło" : "Pokaż hasło"}
-            className="absolute top-1/2 right-2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+            onClick={() => setShowPassword((prev) => !prev)}
+            tabIndex={-1}
+            aria-label={showPassword ? "Hide password" : "Show password"}
+            className="absolute inset-y-0 right-0 flex cursor-pointer items-center pr-3 text-muted-foreground transition-colors hover:text-foreground"
           >
-            {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+            {showPassword ? (
+              <EyeOff className="size-4" aria-hidden="true" />
+            ) : (
+              <Eye className="size-4" aria-hidden="true" />
+            )}
           </button>
-        )}
+        ) : null}
       </div>
+
       {error ? (
-        <p id={`${id}-error`} className="text-xs text-destructive">
+        <p id={errorId} role="alert" className="text-xs font-medium text-destructive">
           {error}
         </p>
       ) : hint ? (
-        <p id={`${id}-hint`} className="text-xs text-muted-foreground">
+        <p id={hintId} className="text-xs text-muted-foreground">
           {hint}
         </p>
       ) : null}

@@ -1,233 +1,301 @@
 import {
-  Activity,
   AlertTriangle,
-  Calendar,
-  Clock,
+  CalendarClock,
+  CheckCircle2,
   FileSpreadsheet,
+  Gauge,
+  Loader2,
   ShieldAlert,
-  ShieldCheck,
-  ShieldQuestion,
   Users,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import type { ActiveAnalysis } from "@/lib/analysis";
 import {
   formatDateTime,
   formatDaysToChurn,
-  formatNumber,
-  formatPercent,
+  formatInteger,
+  formatProbabilityPercent,
   formatUncertaintyRange,
 } from "@/lib/format";
+import { cn } from "@/lib/utils";
+import type { ActiveAnalysisView } from "@/lib/analysis";
 
-function riskOf(probability: number) {
-  if (probability > 0.7) {
+interface AnalysisResultCardProps {
+  analysis: ActiveAnalysisView;
+  isLoading?: boolean;
+}
+
+function getRiskTier(probability: number): {
+  label: string;
+  badgeClass: string;
+  barClass: string;
+} {
+  const normalized = probability <= 1 ? probability * 100 : probability;
+
+  if (normalized >= 70) {
     return {
-      label: "Wysokie",
-      icon: ShieldAlert,
-      className: "text-risk-high bg-risk-high/10 ring-risk-high/25",
+      label: "High",
+      badgeClass: "border-rose-500/40 bg-rose-500/15 text-rose-300",
+      barClass: "bg-rose-500",
     };
   }
-  if (probability >= 0.3) {
+
+  if (normalized >= 40) {
     return {
-      label: "Średnie",
-      icon: ShieldQuestion,
-      className: "text-risk-medium bg-risk-medium/10 ring-risk-medium/25",
+      label: "Medium",
+      badgeClass: "border-amber-500/40 bg-amber-500/15 text-amber-300",
+      barClass: "bg-amber-400",
     };
   }
+
   return {
-    label: "Niskie",
-    icon: ShieldCheck,
-    className: "text-risk-low bg-risk-low/10 ring-risk-low/25",
+    label: "Low",
+    badgeClass: "border-emerald-500/40 bg-emerald-500/15 text-emerald-300",
+    barClass: "bg-emerald-400",
   };
 }
 
-function formatCell(value: unknown): string {
-  if (value === null || value === undefined || value === "") return "—";
-  if (typeof value === "number") {
-    return Number.isInteger(value)
-      ? formatNumber(value)
-      : value.toLocaleString("pl-PL", { maximumFractionDigits: 3 });
-  }
-  return String(value);
+function summarizeRawFeatures(
+  rawFeatures: Record<string, unknown>,
+): Array<[string, string]> {
+  return Object.entries(rawFeatures)
+    .filter(([, value]) => value !== null && value !== undefined && value !== "")
+    .slice(0, 4)
+    .map(([key, value]) => {
+      if (typeof value === "number") {
+        const formatted = Number.isInteger(value)
+          ? String(value)
+          : value.toFixed(2);
+        return [key, formatted];
+      }
+      return [key, String(value)];
+    });
 }
 
 export function AnalysisResultCard({
   analysis,
   isLoading = false,
-}: {
-  analysis: ActiveAnalysis;
-  isLoading?: boolean;
-}) {
-  const rows = analysis.predictions.slice(0, 10);
-
-  // Zbierz nazwy dodatkowych cech z raw_features (pomijając pola już widoczne w głównych kolumnach)
-  const featureColumns = Array.from(
-    rows.reduce((set, item) => {
-      for (const key of Object.keys(item.raw_features ?? {})) {
-        set.add(key);
-      }
-      return set;
-    }, new Set<string>()),
-  );
-
+}: AnalysisResultCardProps) {
   return (
     <Card
       className={cn(
-        "bg-card/70 backdrop-blur-sm transition-opacity",
-        isLoading && "opacity-60",
+        "relative border-border/80 bg-card/85 shadow-xl backdrop-blur-sm transition-opacity",
+        isLoading && "opacity-75",
       )}
     >
-      <CardHeader className="gap-4 border-b border-border/60">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="space-y-1">
-            <CardTitle className="flex flex-wrap items-center gap-2 text-lg">
-              <FileSpreadsheet className="size-5 text-primary" />
-              <span>{analysis.filename}</span>
-            </CardTitle>
-            <CardDescription className="flex flex-wrap items-center gap-x-4 gap-y-1">
-              {analysis.createdAt && (
-                <span className="inline-flex items-center gap-1.5">
-                  <Calendar className="size-3.5" />
-                  Wgrano: {formatDateTime(analysis.createdAt)}
-                </span>
-              )}
-              <span>
-                Top {formatNumber(rows.length)} najbardziej zagrożonych klientów
-              </span>
-            </CardDescription>
+      <CardContent className="space-y-6 p-5 sm:p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 pb-4">
+          <div className="flex items-center gap-3">
+            <span className="flex size-10 items-center justify-center rounded-xl bg-primary/15 text-primary ring-1 ring-primary/30">
+              <FileSpreadsheet className="size-5" aria-hidden="true" />
+            </span>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="font-heading text-base font-bold text-foreground sm:text-lg">
+                  {analysis.filename}
+                </h3>
+                <Badge className="bg-primary/20 font-mono text-[11px] text-primary hover:bg-primary/20">
+                  <CheckCircle2 className="mr-1 size-3" aria-hidden="true" />
+                  {analysis.status}
+                </Badge>
+              </div>
+              <p className="font-mono text-xs text-muted-foreground">
+                {analysis.createdAt
+                  ? `Uploaded: ${formatDateTime(analysis.createdAt)} • `
+                  : null}
+                ID: {analysis.id}
+              </p>
+            </div>
           </div>
-          <Badge variant="outline" className="border-primary/30 text-primary">
-            {analysis.status}
-          </Badge>
+
+          {isLoading ? (
+            <div className="inline-flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary">
+              <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+              Loading analysis...
+            </div>
+          ) : null}
         </div>
 
-        {/* Podsumowanie analizy */}
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <div className="flex items-center gap-3 rounded-xl bg-background/50 p-3.5 ring-1 ring-border/70">
-            <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <Users className="size-5" />
-            </span>
-            <div>
-              <p className="text-xs text-muted-foreground">Liczba klientów</p>
-              <p className="text-lg font-semibold tabular-nums">
-                {formatNumber(analysis.rowsCount)}
-              </p>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="rounded-xl border border-border/70 bg-background/60 p-4">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>Analyzed members</span>
+              <Users className="size-4 text-primary" aria-hidden="true" />
             </div>
+            <p className="mt-2 font-heading text-2xl font-bold text-foreground">
+              {formatInteger(analysis.rowsCount)}
+            </p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              Total records in CSV file
+            </p>
           </div>
 
-          <div className="flex items-center gap-3 rounded-xl bg-background/50 p-3.5 ring-1 ring-border/70">
-            <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-risk-high/10 text-risk-high">
-              <AlertTriangle className="size-5" />
-            </span>
-            <div>
-              <p className="text-xs text-muted-foreground">Zagrożeni odejściem</p>
-              <p className="text-lg font-semibold tabular-nums text-risk-high">
-                {formatNumber(analysis.highRiskCount)}
-              </p>
+          <div className="rounded-xl border border-rose-500/30 bg-rose-500/8 p-4">
+            <div className="flex items-center justify-between text-xs text-rose-300">
+              <span>High-risk members</span>
+              <AlertTriangle className="size-4 text-rose-400" aria-hidden="true" />
             </div>
+            <p className="mt-2 font-heading text-2xl font-bold text-rose-300">
+              {formatInteger(analysis.highRiskCount)}
+            </p>
+            <p className="mt-0.5 text-[11px] text-rose-200/80">
+              Require immediate retention action
+            </p>
           </div>
 
-          <div className="flex items-center gap-3 rounded-xl bg-background/50 p-3.5 ring-1 ring-border/70">
-            <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-risk-medium/10 text-risk-medium">
-              <Activity className="size-5" />
-            </span>
-            <div>
-              <p className="text-xs text-muted-foreground">Średnie ryzyko</p>
-              <p className="text-lg font-semibold tabular-nums">
-                {formatPercent(analysis.avgChurnProbability)}
-              </p>
+          <div className="rounded-xl border border-border/70 bg-background/60 p-4">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>Average churn risk</span>
+              <Gauge className="size-4 text-amber-400" aria-hidden="true" />
             </div>
+            <p className="mt-2 font-heading text-2xl font-bold text-foreground">
+              {formatProbabilityPercent(analysis.avgChurnProbability)}
+            </p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              Average probability across the club
+            </p>
           </div>
         </div>
-      </CardHeader>
 
-      <CardContent className="px-0">
-        {rows.length === 0 ? (
-          <p className="px-4 py-6 text-sm text-muted-foreground">
-            Brak predykcji klientów dla tej analizy.
-          </p>
-        ) : (
-          <div className="max-h-[520px] overflow-auto">
-            <Table>
-              <TableHeader className="sticky top-0 z-10 bg-card">
-                <TableRow className="hover:bg-transparent">
-                  <TableHead className="w-12 pl-4 text-muted-foreground">#</TableHead>
-                  <TableHead>Indeks klienta</TableHead>
-                  <TableHead>Prawdopodobieństwo odejścia</TableHead>
-                  <TableHead>Przedział niepewności</TableHead>
-                  <TableHead>Przewidywany czas do rezygnacji</TableHead>
-                  {featureColumns.map((column) => (
-                    <TableHead key={column} className="font-mono text-xs text-muted-foreground">
-                      {column}
-                    </TableHead>
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((item, index) => {
-                  const risk = riskOf(item.churn_probability);
-                  return (
-                    <TableRow key={item.id ?? `${item.client_index}-${index}`}>
-                      <TableCell className="pl-4 text-muted-foreground tabular-nums">
-                        {index + 1}
-                      </TableCell>
-                      <TableCell className="font-mono font-medium tabular-nums">
-                        #{formatNumber(item.client_index)}
-                      </TableCell>
-                      <TableCell>
-                        <span
-                          className={cn(
-                            "inline-flex items-center gap-1.5 rounded-md px-2.5 py-0.5 text-xs font-medium ring-1",
-                            risk.className,
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="size-4 text-rose-400" aria-hidden="true" />
+              <h4 className="font-heading text-sm font-semibold text-foreground sm:text-base">
+                Top 10 Most At-Risk Members
+              </h4>
+            </div>
+            <span className="font-mono text-xs text-muted-foreground">
+              Showing {analysis.top10.length} of{" "}
+              {formatInteger(analysis.rowsCount)} members
+            </span>
+          </div>
+
+          {analysis.top10.length > 0 ? (
+            <div className="overflow-x-auto rounded-xl border border-border/80 bg-background/60">
+              <table className="w-full border-collapse text-left text-xs">
+                <thead>
+                  <tr className="border-b border-border/80 bg-secondary/60 text-[11px] text-muted-foreground uppercase">
+                    <th className="w-12 px-3.5 py-3 font-mono font-medium">
+                      #
+                    </th>
+                    <th className="px-3.5 py-3 font-mono font-semibold text-foreground">
+                      Client index
+                    </th>
+                    <th className="px-3.5 py-3 font-mono font-semibold text-foreground">
+                      Churn probability
+                    </th>
+                    <th className="px-3.5 py-3 font-mono font-semibold text-foreground">
+                      Uncertainty interval
+                    </th>
+                    <th className="px-3.5 py-3 font-mono font-semibold text-foreground">
+                      Estimated time to churn
+                    </th>
+                    <th className="px-3.5 py-3 font-mono font-semibold text-foreground">
+                      Risk level
+                    </th>
+                    <th className="px-3.5 py-3 font-mono font-semibold text-foreground">
+                      Client features
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/50">
+                  {analysis.top10.map((item, idx) => {
+                    const tier = getRiskTier(item.churn_probability);
+                    const pct =
+                      item.churn_probability <= 1
+                        ? Math.min(100, Math.max(0, item.churn_probability * 100))
+                        : Math.min(100, Math.max(0, item.churn_probability));
+                    const featurePairs = summarizeRawFeatures(
+                      item.raw_features ?? {},
+                    );
+
+                    return (
+                      <tr
+                        key={item.id ?? `${item.client_index}-${idx}`}
+                        className="transition-colors hover:bg-secondary/35"
+                      >
+                        <td className="px-3.5 py-3 font-mono text-muted-foreground">
+                          {idx + 1}
+                        </td>
+
+                        <td className="px-3.5 py-3 font-mono font-semibold whitespace-nowrap text-foreground">
+                          Client #{item.client_index}
+                        </td>
+
+                        <td className="min-w-44 px-3.5 py-3">
+                          <div className="flex items-center gap-2.5">
+                            <span className="w-14 font-mono text-xs font-bold text-foreground">
+                              {formatProbabilityPercent(item.churn_probability)}
+                            </span>
+                            <div className="h-2 flex-1 overflow-hidden rounded-full bg-secondary">
+                              <div
+                                className={cn("h-full rounded-full", tier.barClass)}
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                          </div>
+                        </td>
+
+                        <td className="px-3.5 py-3 font-mono whitespace-nowrap text-foreground/90">
+                          {formatUncertaintyRange(
+                            item.uncertainty_low,
+                            item.uncertainty_high,
                           )}
-                        >
-                          <risk.icon className="size-3.5" />
-                          <span className="tabular-nums">
-                            {formatPercent(item.churn_probability)}
+                        </td>
+
+                        <td className="px-3.5 py-3 font-mono whitespace-nowrap text-foreground/90">
+                          <span className="inline-flex items-center gap-1.5">
+                            <CalendarClock
+                              className="size-3.5 text-muted-foreground"
+                              aria-hidden="true"
+                            />
+                            {formatDaysToChurn(item.predicted_days_to_churn)}
                           </span>
-                          <span className="opacity-80">· {risk.label}</span>
-                        </span>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground tabular-nums">
-                        {formatUncertaintyRange(item.uncertainty_low, item.uncertainty_high)}
-                      </TableCell>
-                      <TableCell className="tabular-nums">
-                        <span className="inline-flex items-center gap-1.5">
-                          <Clock className="size-3.5 text-muted-foreground" />
-                          {formatDaysToChurn(item.predicted_days_to_churn)}
-                        </span>
-                      </TableCell>
-                      {featureColumns.map((column) => (
-                        <TableCell
-                          key={column}
-                          className="max-w-[200px] truncate text-muted-foreground tabular-nums"
-                        >
-                          {formatCell(item.raw_features?.[column])}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
-        )}
+                        </td>
+
+                        <td className="px-3.5 py-3 whitespace-nowrap">
+                          <span
+                            className={cn(
+                              "inline-flex items-center rounded-md border px-2 py-0.5 font-mono text-[11px] font-medium",
+                              tier.badgeClass,
+                            )}
+                          >
+                            {tier.label}
+                          </span>
+                        </td>
+
+                        <td className="px-3.5 py-3">
+                          {featurePairs.length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {featurePairs.map(([key, val]) => (
+                                <span
+                                  key={key}
+                                  className="inline-flex items-center gap-1 rounded bg-secondary/80 px-2 py-0.5 font-mono text-[11px] text-muted-foreground"
+                                >
+                                  <span className="text-foreground/75">{key}:</span>
+                                  <span className="font-medium text-foreground">
+                                    {val}
+                                  </span>
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground/50">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-border/60 bg-background/40 p-6 text-center text-xs text-muted-foreground">
+              No client predictions available for this analysis.
+            </div>
+          )}
+        </div>
       </CardContent>
     </Card>
   );

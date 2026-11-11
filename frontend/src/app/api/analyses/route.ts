@@ -1,42 +1,62 @@
-import { NextResponse } from "next/server";
-import { ApiError, ApiUnavailableError, apiRequest } from "@/lib/api";
-import { getSessionToken } from "@/lib/auth/session";
-import type { AnalysisJobSummary } from "@/lib/analysis";
+import { NextResponse, type NextRequest } from "next/server";
+import { getApiBaseUrl, extractApiErrorMessage } from "@/lib/api";
+import { SESSION_COOKIE_NAME } from "@/lib/auth/constants";
 
 /**
- * Proxy `GET /api/analyses` → FastAPI `GET /api/analyses`.
- * Przekazuje token z ciasteczka `HttpOnly` w nagłówku `Authorization: Bearer`.
+ * Proxies `GET /api/analyses` to FastAPI using the HttpOnly `session_token` cookie.
  */
-export async function GET() {
-  const token = await getSessionToken();
+export async function GET(request: NextRequest) {
+  const token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
+
   if (!token) {
     return NextResponse.json(
-      { error: "Sesja wygasła. Zaloguj się ponownie." },
+      { detail: "Your session has expired. Please sign in again." },
       { status: 401 },
     );
   }
 
+  const backendUrl = `${getApiBaseUrl()}/api/analyses`;
+
   try {
-    const analyses = await apiRequest<AnalysisJobSummary[]>("/api/analyses", {
-      token,
+    const backendResponse = await fetch(backendUrl, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      },
+      cache: "no-store",
     });
-    return NextResponse.json(analyses, {
-      headers: { "Cache-Control": "no-store" },
-    });
-  } catch (error) {
-    if (error instanceof ApiError) {
-      return NextResponse.json(
-        { error: error.message || "Nie udało się pobrać historii analiz." },
-        { status: error.status },
+
+    const contentType = backendResponse.headers.get("content-type") ?? "";
+    const payload = contentType.includes("application/json")
+      ? await backendResponse.json()
+      : await backendResponse.text();
+
+    if (!backendResponse.ok) {
+      const message = extractApiErrorMessage(
+        payload,
+        `Failed to fetch analyses history (${backendResponse.status}).`,
       );
+      const response = NextResponse.json(
+        { detail: message },
+        { status: backendResponse.status },
+      );
+
+      if (backendResponse.status === 401) {
+        response.cookies.delete(SESSION_COOKIE_NAME);
+      }
+
+      return response;
     }
-    if (error instanceof ApiUnavailableError) {
-      return NextResponse.json({ error: error.message }, { status: 502 });
-    }
-    console.error("[analyses] Nieoczekiwany błąd:", error);
+
+    return NextResponse.json(payload, { status: 200 });
+  } catch (error) {
+    console.error(`[api/analyses] Failed to connect to ${backendUrl}:`, error);
     return NextResponse.json(
-      { error: "Wystąpił błąd podczas pobierania historii analiz." },
-      { status: 500 },
+      {
+        detail: `Cannot connect to the FastAPI server (${getApiBaseUrl()}).`,
+      },
+      { status: 503 },
     );
   }
 }

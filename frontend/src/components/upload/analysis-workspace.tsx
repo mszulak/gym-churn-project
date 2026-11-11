@@ -1,225 +1,336 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertCircle, BarChart3, History, Upload } from "lucide-react";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Card, CardContent } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
-  SessionExpiredError,
-  fetchAnalysesList,
-  fetchAnalysisDetail,
-  normalizeDetailResponse,
-  normalizeUploadResponse,
-  redirectToSignout,
-  type ActiveAnalysis,
-  type AnalysisJobSummary,
-  type UploadAnalysisResponse,
+  AlertCircle,
+  History,
+  Loader2,
+  ShieldAlert,
+  Upload,
+} from "lucide-react";
+import { AUTH_ROUTES } from "@/lib/auth/constants";
+import type {
+  AnalysisDetailResponse,
+  AnalysisSummaryItem,
+  UploadAnalysisResponse,
+} from "@/lib/api";
+import {
+  fromAnalysisDetail,
+  fromUploadResponse,
+  type ActiveAnalysisView,
 } from "@/lib/analysis";
+import { Card, CardContent } from "@/components/ui/card";
 import { CsvUpload } from "./csv-upload";
 import { AnalysisResultCard } from "./analysis-result";
-import { AnalysesHistory } from "./analyses-history";
+import { AnalysesHistoryList } from "./analyses-history";
 
-/**
- * Główny widok roboczy z trzema sekcjami:
- * 1. Góra: Dodaj plik CSV
- * 2. Środek: Aktualnie wybrana analiza – Top 10 klientów
- * 3. Dół: Poprzednie analizy (pobierane z GET /api/analyses przy starcie oraz po każdym uploadzie)
- */
 export function AnalysisWorkspace() {
-  const [analyses, setAnalyses] = useState<AnalysisJobSummary[]>([]);
-  const [activeAnalysis, setActiveAnalysis] = useState<ActiveAnalysis | null>(null);
-  const [isLoadingList, setIsLoadingList] = useState(true);
-  const [loadingJobId, setLoadingJobId] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const detailAbortRef = useRef<AbortController | null>(null);
+  const router = useRouter();
 
-  const selectAnalysis = useCallback(async (jobId: string) => {
-    detailAbortRef.current?.abort();
-    const controller = new AbortController();
-    detailAbortRef.current = controller;
+  const [history, setHistory] = useState<AnalysisSummaryItem[]>([]);
+  const [activeAnalysis, setActiveAnalysis] =
+    useState<ActiveAnalysisView | null>(null);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [loadingAnalysisId, setLoadingAnalysisId] = useState<string | null>(
+    null,
+  );
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
-    setLoadingJobId(jobId);
-    setErrorMessage(null);
-    try {
-      const detail = await fetchAnalysisDetail(jobId, controller.signal);
-      if (controller.signal.aborted) return;
-      setActiveAnalysis(normalizeDetailResponse(detail));
-    } catch (err) {
-      if (controller.signal.aborted) return;
-      if (err instanceof SessionExpiredError) {
-        redirectToSignout();
-        return;
-      }
-      setErrorMessage(
-        err instanceof Error ? err.message : "Nie udało się pobrać szczegółów analizy.",
-      );
-    } finally {
-      if (detailAbortRef.current === controller) {
-        detailAbortRef.current = null;
-        setLoadingJobId(null);
-      }
-    }
-  }, []);
+  const fetchAnalysisDetail = useCallback(
+    async (jobId: string) => {
+      setLoadingAnalysisId(jobId);
+      setHistoryError(null);
 
-  // Pobierz historię przy załadowaniu strony i automatycznie wczytaj najnowszą analizę
-  useEffect(() => {
-    const controller = new AbortController();
-
-    async function loadInitial() {
-      setIsLoadingList(true);
-      setErrorMessage(null);
       try {
-        const list = await fetchAnalysesList(controller.signal);
-        if (controller.signal.aborted) return;
-        setAnalyses(list);
-        if (list.length > 0) {
-          await selectAnalysis(list[0].id);
-        }
-      } catch (err) {
-        if (controller.signal.aborted) return;
-        if (err instanceof SessionExpiredError) {
-          redirectToSignout();
+        const response = await fetch(
+          `/api/analyses/${encodeURIComponent(jobId)}`,
+          {
+            method: "GET",
+            cache: "no-store",
+          },
+        );
+
+        if (response.status === 401) {
+          router.push(`${AUTH_ROUTES.login}?expired=1`);
+          router.refresh();
           return;
         }
-        setErrorMessage(
-          err instanceof Error ? err.message : "Nie udało się pobrać historii analiz.",
+
+        const payload = await response.json();
+
+        if (!response.ok) {
+          const message =
+            payload && typeof payload.detail === "string"
+              ? payload.detail
+              : `Failed to fetch analysis details (${response.status}).`;
+          setHistoryError(message);
+          return;
+        }
+
+        const detail = payload as AnalysisDetailResponse;
+        setActiveAnalysis(fromAnalysisDetail(detail));
+      } catch {
+        setHistoryError(
+          "An error occurred while fetching analysis details from the server.",
         );
       } finally {
-        if (!controller.signal.aborted) {
-          setIsLoadingList(false);
+        setLoadingAnalysisId(null);
+      }
+    },
+    [router],
+  );
+
+  const refreshHistoryList = useCallback(async () => {
+    try {
+      const response = await fetch("/api/analyses", {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      if (response.status === 401) {
+        router.push(`${AUTH_ROUTES.login}?expired=1`);
+        router.refresh();
+        return;
+      }
+
+      const payload = await response.json();
+
+      if (!response.ok) {
+        const message =
+          payload && typeof payload.detail === "string"
+            ? payload.detail
+            : `Failed to fetch analyses list (${response.status}).`;
+        setHistoryError(message);
+        return;
+      }
+
+      const list = Array.isArray(payload)
+        ? (payload as AnalysisSummaryItem[])
+        : [];
+      setHistoryError(null);
+      setHistory(list);
+    } catch {
+      setHistoryError(
+        "Failed to connect to the server while fetching analyses history.",
+      );
+    }
+  }, [router]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadInitialWorkspace() {
+      try {
+        const listResponse = await fetch("/api/analyses", {
+          method: "GET",
+          cache: "no-store",
+        });
+
+        if (cancelled) return;
+
+        if (listResponse.status === 401) {
+          router.push(`${AUTH_ROUTES.login}?expired=1`);
+          router.refresh();
+          return;
+        }
+
+        const listPayload = await listResponse.json();
+        if (cancelled) return;
+
+        if (!listResponse.ok) {
+          const message =
+            listPayload && typeof listPayload.detail === "string"
+              ? listPayload.detail
+              : `Failed to fetch analyses list (${listResponse.status}).`;
+          setHistoryError(message);
+          return;
+        }
+
+        const list = Array.isArray(listPayload)
+          ? (listPayload as AnalysisSummaryItem[])
+          : [];
+        setHistory(list);
+
+        if (list.length > 0) {
+          const latestId = list[0].id;
+          const detailResponse = await fetch(
+            `/api/analyses/${encodeURIComponent(latestId)}`,
+            {
+              method: "GET",
+              cache: "no-store",
+            },
+          );
+
+          if (cancelled) return;
+
+          if (detailResponse.ok) {
+            const detailPayload =
+              (await detailResponse.json()) as AnalysisDetailResponse;
+            if (!cancelled) {
+              setActiveAnalysis(fromAnalysisDetail(detailPayload));
+            }
+          }
+        }
+      } catch {
+        if (!cancelled) {
+          setHistoryError(
+            "Failed to connect to the server while fetching analyses history.",
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setIsInitialLoading(false);
         }
       }
     }
 
-    void loadInitial();
+    void loadInitialWorkspace();
+
     return () => {
-      controller.abort();
-      detailAbortRef.current?.abort();
+      cancelled = true;
     };
-  }, [selectAnalysis]);
+  }, [router]);
 
-  // Po udanym wgraniu nowego pliku CSV: pokaż wynik od razu i odśwież listę historii na dole
-  const handleAnalysisCompleted = useCallback(async (result: UploadAnalysisResponse) => {
-    detailAbortRef.current?.abort();
-    setLoadingJobId(null);
-    setErrorMessage(null);
-
+  function handleUploadSuccess(uploaded: UploadAnalysisResponse) {
     const nowIso = new Date().toISOString();
-    setActiveAnalysis(normalizeUploadResponse(result, nowIso));
+    setActiveAnalysis(fromUploadResponse(uploaded, nowIso));
+    void refreshHistoryList();
+  }
 
-    try {
-      const freshList = await fetchAnalysesList();
-      setAnalyses(freshList);
-      // Uzupełnij dokładny znacznik czasu z bazy danych
-      const matching = freshList.find((item) => item.id === result.job_id);
-      if (matching) {
-        setActiveAnalysis((prev) =>
-          prev && prev.id === matching.id
-            ? { ...prev, createdAt: matching.created_at }
-            : prev,
-        );
-      }
-    } catch (err) {
-      if (err instanceof SessionExpiredError) {
-        redirectToSignout();
-      }
-    }
-  }, []);
+  function handleSelectFromHistory(jobId: string) {
+    void fetchAnalysisDetail(jobId);
+  }
 
   return (
-    <div className="flex flex-col gap-14">
-      {/* 1. Góra strony: Dodaj plik CSV */}
-      <section aria-labelledby="section-upload" className="space-y-4">
-        <div className="space-y-1">
-          <h1
-            id="section-upload"
-            className="flex items-center gap-2.5 text-2xl font-semibold tracking-tight sm:text-3xl"
-          >
-            <Upload className="size-6 text-primary" />
-            Dodaj plik CSV
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Wgraj dane klientów siłowni, aby obliczyć prawdopodobieństwo rezygnacji, przedział
-            niepewności oraz przewidywany czas do odejścia.
-          </p>
+    <div className="mx-auto w-full max-w-6xl space-y-10 px-4 py-8 sm:px-6 sm:py-10 lg:px-8">
+      <section aria-labelledby="upload-heading" className="space-y-3">
+        <div className="flex items-center gap-2.5">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary ring-1 ring-primary/30">
+            <Upload className="size-4" aria-hidden="true" />
+          </span>
+          <div>
+            <h1
+              id="upload-heading"
+              className="font-heading text-lg font-bold tracking-tight text-foreground sm:text-xl"
+            >
+              Upload CSV File
+            </h1>
+            <p className="text-xs text-muted-foreground">
+              Upload a CSV export with your gym members to calculate churn
+              predictions and save the result to the database.
+            </p>
+          </div>
         </div>
 
-        <CsvUpload onAnalysisCompleted={handleAnalysisCompleted} />
+        <CsvUpload onUploadSuccess={handleUploadSuccess} />
       </section>
 
-      {/* 2. Środek strony: Aktualnie wybrana analiza – Top 10 klientów */}
-      <section aria-labelledby="section-active-analysis" className="space-y-4">
-        <div className="space-y-1">
-          <h2
-            id="section-active-analysis"
-            className="flex items-center gap-2.5 text-xl font-semibold tracking-tight sm:text-2xl"
-          >
-            <BarChart3 className="size-5 text-primary" />
-            Aktualnie wybrana analiza – Top 10 klientów
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            Podsumowanie wybranej analizy oraz 10 klientów z najwyższym ryzykiem rezygnacji z
-            karnetu.
-          </p>
+      <section aria-labelledby="active-analysis-heading" className="space-y-3">
+        <div className="flex items-center gap-2.5">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-rose-500/15 text-rose-400 ring-1 ring-rose-500/30">
+            <ShieldAlert className="size-4" aria-hidden="true" />
+          </span>
+          <div>
+            <h2
+              id="active-analysis-heading"
+              className="font-heading text-lg font-bold tracking-tight text-foreground sm:text-xl"
+            >
+              Selected Analysis — Top 10 At-Risk Members
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              Summary of the selected analysis along with churn probability,
+              uncertainty intervals, and estimated days to churn.
+            </p>
+          </div>
         </div>
 
-        {errorMessage && (
-          <Alert variant="destructive" className="border-destructive/40">
-            <AlertCircle />
-            <AlertTitle>Wystąpił problem</AlertTitle>
-            <AlertDescription>{errorMessage}</AlertDescription>
-          </Alert>
-        )}
-
-        {activeAnalysis ? (
+        {isInitialLoading && !activeAnalysis ? (
+          <Card className="border-border/70 bg-card/60">
+            <CardContent className="flex items-center justify-center gap-2.5 py-12 text-xs text-muted-foreground">
+              <Loader2
+                className="size-4 animate-spin text-primary"
+                aria-hidden="true"
+              />
+              <span>Loading latest analysis...</span>
+            </CardContent>
+          </Card>
+        ) : activeAnalysis ? (
           <AnalysisResultCard
             analysis={activeAnalysis}
-            isLoading={loadingJobId !== null}
+            isLoading={
+              loadingAnalysisId !== null &&
+              loadingAnalysisId !== activeAnalysis.id
+            }
           />
-        ) : isLoadingList || loadingJobId !== null ? (
-          <Card className="bg-card/70 backdrop-blur-sm">
-            <CardContent className="space-y-4 py-6">
-              <Skeleton className="h-6 w-56" />
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <Skeleton className="h-18 rounded-xl" />
-                <Skeleton className="h-18 rounded-xl" />
-                <Skeleton className="h-18 rounded-xl" />
-              </div>
-              <Skeleton className="h-64 rounded-xl" />
+        ) : (
+          <Card className="border-border/70 bg-card/50">
+            <CardContent className="flex flex-col items-center justify-center gap-2 py-12 text-center">
+              <p className="font-heading text-sm font-semibold text-foreground">
+                No analysis selected
+              </p>
+              <p className="max-w-md text-xs text-muted-foreground">
+                Upload a CSV file above or select one of your previous analyses
+                from the list below to see the Top 10 most at-risk members.
+              </p>
+            </CardContent>
+          </Card>
+        )}
+      </section>
+
+      <section aria-labelledby="history-heading" className="space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5">
+            <span className="flex size-8 items-center justify-center rounded-lg bg-secondary text-foreground ring-1 ring-border">
+              <History className="size-4" aria-hidden="true" />
+            </span>
+            <div>
+              <h2
+                id="history-heading"
+                className="font-heading text-lg font-bold tracking-tight text-foreground sm:text-xl"
+              >
+                Previous Analyses
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                Click any analysis from the history to load its Top 10 table
+                above.
+              </p>
+            </div>
+          </div>
+
+          <span className="font-mono text-xs text-muted-foreground">
+            {history.length} {history.length === 1 ? "analysis" : "analyses"}
+          </span>
+        </div>
+
+        {historyError ? (
+          <div
+            role="alert"
+            className="flex items-start gap-2.5 rounded-xl border border-destructive/40 bg-destructive/10 p-3.5 text-xs text-destructive"
+          >
+            <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            <span>{historyError}</span>
+          </div>
+        ) : null}
+
+        {isInitialLoading ? (
+          <Card className="border-border/70 bg-card/60">
+            <CardContent className="flex items-center justify-center gap-2.5 py-10 text-xs text-muted-foreground">
+              <Loader2
+                className="size-4 animate-spin text-primary"
+                aria-hidden="true"
+              />
+              <span>Loading analyses history...</span>
             </CardContent>
           </Card>
         ) : (
-          <Card className="bg-card/50 backdrop-blur-sm">
-            <CardContent className="py-10 text-center text-sm text-muted-foreground">
-              Brak wybranej analizy. Wgraj plik CSV powyżej lub wybierz analizę z historii poniżej.
-            </CardContent>
-          </Card>
+          <AnalysesHistoryList
+            items={history}
+            selectedId={activeAnalysis?.id ?? null}
+            loadingId={loadingAnalysisId}
+            onSelect={handleSelectFromHistory}
+          />
         )}
-      </section>
-
-      {/* 3. Dół strony: Poprzednie analizy / Historia */}
-      <section aria-labelledby="section-history" className="space-y-4">
-        <div className="space-y-1">
-          <h2
-            id="section-history"
-            className="flex items-center gap-2.5 text-xl font-semibold tracking-tight sm:text-2xl"
-          >
-            <History className="size-5 text-primary" />
-            Poprzednie analizy
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            Historia wszystkich analiz wykonanych na Twoim koncie.
-          </p>
-        </div>
-
-        <AnalysesHistory
-          analyses={analyses}
-          selectedId={activeAnalysis?.id ?? null}
-          loadingId={loadingJobId}
-          isLoadingList={isLoadingList}
-          onSelect={selectAnalysis}
-        />
       </section>
     </div>
   );

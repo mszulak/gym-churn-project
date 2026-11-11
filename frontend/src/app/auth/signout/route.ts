@@ -1,13 +1,15 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { LOGIN_PATH } from "@/lib/auth/constants";
-import { deleteSessionToken } from "@/lib/auth/session";
+import { AUTH_ROUTES, SESSION_COOKIE_NAME } from "@/lib/auth/constants";
 
 /**
- * Czyści nieważną/wygasłą sesję i przekierowuje na /login.
- * Server Component nie może usunąć ciasteczka w trakcie renderu, więc `requireUser()`
- * przekierowuje tutaj, gdy backend odrzuci token.
+ * Clears an invalid or expired `session_token` cookie and redirects to `/login`.
  */
 export async function GET(request: NextRequest) {
-  await deleteSessionToken();
-  return NextResponse.redirect(new URL(LOGIN_PATH, request.url));
+  const loginUrl = new URL(AUTH_ROUTES.login, request.url);
+  loginUrl.searchParams.set("expired", "1");
+
+  const response = NextResponse.redirect(loginUrl);
+  response.cookies.delete(SESSION_COOKIE_NAME);
+
+  return response;
 }

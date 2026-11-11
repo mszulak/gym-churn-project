@@ -1,37 +1,50 @@
 import { NextResponse, type NextRequest } from "next/server";
-import {
-  AUTH_ROUTES,
-  DEFAULT_LOGIN_REDIRECT,
-  LOGIN_PATH,
-  SESSION_COOKIE,
-} from "@/lib/auth/constants";
+import { AUTH_ROUTES, SESSION_COOKIE_NAME } from "@/lib/auth/constants";
 
-/**
- * Proxy (w Next.js 16 następca `middleware.ts`) — szybkie, optymistyczne przekierowania
- * na podstawie samej obecności ciasteczka. Ważność tokenu weryfikuje serwer
- * (`requireUser()` → GET /api/auth/me) oraz backend przy każdym żądaniu API.
- */
+const PROTECTED_PATHS = new Set<string>([
+  AUTH_ROUTES.home,
+  AUTH_ROUTES.dashboard,
+]);
+
+const GUEST_ONLY_PATHS = new Set<string>([
+  AUTH_ROUTES.login,
+  AUTH_ROUTES.register,
+]);
+
+function isProtectedPath(pathname: string): boolean {
+  if (PROTECTED_PATHS.has(pathname)) {
+    return true;
+  }
+  return pathname.startsWith(`${AUTH_ROUTES.dashboard}/`);
+}
+
+function isGuestOnlyPath(pathname: string): boolean {
+  return GUEST_ONLY_PATHS.has(pathname);
+}
+
 export function proxy(request: NextRequest) {
-  const { pathname } = request.nextUrl;
-  const hasSession = Boolean(request.cookies.get(SESSION_COOKIE)?.value);
+  const { pathname, search } = request.nextUrl;
+  const sessionToken = request.cookies.get(SESSION_COOKIE_NAME)?.value;
+  const isAuthenticated = Boolean(sessionToken && sessionToken.trim().length > 0);
 
-  const isProtected =
-    pathname === "/" || pathname === "/dashboard" || pathname.startsWith("/dashboard/");
-  const isAuthRoute = (AUTH_ROUTES as readonly string[]).includes(pathname);
-
-  if (isProtected && !hasSession) {
-    return NextResponse.redirect(new URL(LOGIN_PATH, request.url));
+  if (isProtectedPath(pathname) && !isAuthenticated) {
+    const loginUrl = new URL(AUTH_ROUTES.login, request.url);
+    if (pathname !== AUTH_ROUTES.home) {
+      loginUrl.searchParams.set("next", `${pathname}${search}`);
+    }
+    return NextResponse.redirect(loginUrl);
   }
 
-  if (isAuthRoute && hasSession) {
-    return NextResponse.redirect(new URL(DEFAULT_LOGIN_REDIRECT, request.url));
+  if (isGuestOnlyPath(pathname) && isAuthenticated) {
+    return NextResponse.redirect(new URL(AUTH_ROUTES.home, request.url));
   }
 
   return NextResponse.next();
 }
 
 export const config = {
-  // Celowo tylko strony. `/api/*` (upload CSV) jest pominięte: proxy buforuje body
-  // żądania z limitem 10 MB i po cichu ucinałoby większe pliki.
-  matcher: ["/", "/dashboard/:path*", "/login", "/register"],
+  // Exclude `/api/*` so multipart CSV uploads are not truncated by the 10 MB proxy buffer limit.
+  matcher: [
+    "/((?!api/|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+  ],
 };

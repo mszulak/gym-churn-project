@@ -1,78 +1,105 @@
 import Papa from "papaparse";
 import { uploadConfig } from "@/config/site";
 
-export type CsvRow = Record<string, string>;
+export const MAX_CSV_SIZE_BYTES = uploadConfig.maxFileSizeBytes;
 
-export interface CsvPreview {
-  columns: string[];
-  rows: CsvRow[];
+export interface CsvPreviewData {
+  headers: string[];
+  previewRows: string[][];
   totalRows: number;
   delimiter: string;
-  /** Liczba wierszy z błędami parsowania (np. zła liczba kolumn). */
-  errorCount: number;
 }
 
-/**
- * Walidacja pliku przed parsowaniem. Zwraca komunikat błędu albo null.
- */
 export function validateCsvFile(file: File): string | null {
-  const name = file.name.toLowerCase();
-  const hasValidExtension = uploadConfig.acceptedExtensions.some((ext) =>
-    name.endsWith(ext),
+  const lowerName = file.name.toLowerCase();
+  const hasValidExt = uploadConfig.acceptedExtensions.some((ext) =>
+    lowerName.endsWith(ext),
   );
 
-  if (!hasValidExtension) {
-    return "Nieobsługiwany format pliku. Wgraj plik z rozszerzeniem .csv.";
+  if (!hasValidExt) {
+    return "Unsupported file format. Please select a .csv file.";
   }
+
   if (file.size === 0) {
-    return "Plik jest pusty.";
+    return "The selected CSV file is empty.";
   }
-  if (file.size > uploadConfig.maxFileSizeBytes) {
-    const limitMb = uploadConfig.maxFileSizeBytes / 1024 / 1024;
-    return `Plik jest za duży. Maksymalny rozmiar to ${limitMb} MB.`;
+
+  if (file.size > MAX_CSV_SIZE_BYTES) {
+    const maxMb = Math.round(MAX_CSV_SIZE_BYTES / (1024 * 1024));
+    return `File exceeds the maximum allowed size (${maxMb} MB).`;
   }
+
   return null;
 }
 
 /**
- * Parsuje plik CSV lokalnie w przeglądarce (nic nie jest wysyłane na serwer).
- * Czyta plik strumieniowo: zbiera kilka pierwszych wierszy do podglądu
- * i liczy wszystkie wiersze.
+ * Streams the CSV file in the browser to extract headers, the first N preview rows,
+ * and the total record count without loading the entire file into memory.
  */
-export function parseCsvPreview(file: File): Promise<CsvPreview> {
+export function parseCsvPreview(
+  file: File,
+  maxPreviewRows = uploadConfig.previewRows,
+): Promise<CsvPreviewData> {
   return new Promise((resolve, reject) => {
-    const rows: CsvRow[] = [];
-    let columns: string[] = [];
-    let delimiter = ",";
+    let headers: string[] = [];
+    const previewRows: string[][] = [];
     let totalRows = 0;
-    let errorCount = 0;
+    let detectedDelimiter = ",";
 
-    Papa.parse<CsvRow>(file, {
-      header: true,
+    Papa.parse<string[]>(file, {
+      header: false,
       skipEmptyLines: "greedy",
-      transformHeader: (header) => header.trim(),
       chunk: (results) => {
-        if (columns.length === 0 && results.meta.fields) {
-          columns = results.meta.fields.filter((field) => field !== "");
-          delimiter = results.meta.delimiter;
+        if (results.meta.delimiter) {
+          detectedDelimiter = results.meta.delimiter;
         }
-        totalRows += results.data.length;
-        errorCount += results.errors.length;
 
-        const missing = uploadConfig.previewRows - rows.length;
-        if (missing > 0) {
-          rows.push(...results.data.slice(0, missing));
+        for (const row of results.data) {
+          if (!Array.isArray(row) || row.length === 0) {
+            continue;
+          }
+
+          if (headers.length === 0) {
+            headers = row.map((cell, idx) => {
+              const trimmed = String(cell ?? "").trim();
+              return trimmed || `Column_${idx + 1}`;
+            });
+            continue;
+          }
+
+          totalRows += 1;
+
+          if (previewRows.length < maxPreviewRows) {
+            previewRows.push(row.map((cell) => String(cell ?? "").trim()));
+          }
         }
       },
       complete: () => {
-        if (columns.length === 0) {
-          reject(new Error("Nie udało się odczytać nagłówków kolumn z pliku."));
+        if (headers.length === 0) {
+          reject(
+            new Error("Could not find column headers in the selected CSV file."),
+          );
           return;
         }
-        resolve({ columns, rows, totalRows, delimiter, errorCount });
+
+        if (totalRows === 0) {
+          reject(
+            new Error(
+              "The CSV file contains column headers only and has no client records.",
+            ),
+          );
+          return;
+        }
+
+        resolve({
+          headers,
+          previewRows,
+          totalRows,
+          delimiter: detectedDelimiter,
+        });
       },
       error: (error) => {
-        reject(new Error(`Błąd odczytu pliku: ${error.message}`));
+        reject(new Error(`Error reading CSV file: ${error.message}`));
       },
     });
   });

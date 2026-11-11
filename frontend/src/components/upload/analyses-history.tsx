@@ -1,148 +1,162 @@
+"use client";
+
 import {
   AlertTriangle,
-  Calendar,
   CheckCircle2,
+  Clock,
   FileSpreadsheet,
-  History,
+  FolderClock,
+  Gauge,
   Loader2,
   Users,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
-import type { AnalysisJobSummary } from "@/lib/analysis";
-import { formatDateTime, formatNumber, formatPercent } from "@/lib/format";
+  formatDateTime,
+  formatInteger,
+  formatProbabilityPercent,
+} from "@/lib/format";
+import { cn } from "@/lib/utils";
+import type { AnalysisSummaryItem } from "@/lib/api";
 
-interface AnalysesHistoryProps {
-  analyses: AnalysisJobSummary[];
+interface AnalysesHistoryListProps {
+  items: AnalysisSummaryItem[];
   selectedId: string | null;
   loadingId: string | null;
-  isLoadingList: boolean;
   onSelect: (jobId: string) => void;
 }
 
-export function AnalysesHistory({
-  analyses,
+export function AnalysesHistoryList({
+  items,
   selectedId,
   loadingId,
-  isLoadingList,
   onSelect,
-}: AnalysesHistoryProps) {
+}: AnalysesHistoryListProps) {
+  if (items.length === 0) {
+    return (
+      <Card className="border-border/70 bg-card/50">
+        <CardContent className="flex flex-col items-center justify-center gap-2 py-10 text-center">
+          <span className="flex size-10 items-center justify-center rounded-xl bg-secondary text-muted-foreground">
+            <FolderClock className="size-5" aria-hidden="true" />
+          </span>
+          <p className="font-heading text-sm font-semibold text-foreground">
+            No previous analyses
+          </p>
+          <p className="max-w-md text-xs text-muted-foreground">
+            Once you upload your first CSV file above, it will automatically be
+            saved to your gym&apos;s history and appear here.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
-    <Card className="bg-card/70 backdrop-blur-sm">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <History className="size-4 text-primary" />
-          Lista wcześniejszych analiz
-        </CardTitle>
-        <CardDescription>
-          Kliknij dowolną pozycję, aby wczytać jej podsumowanie oraz tabelę Top 10 klientów powyżej.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        {isLoadingList && analyses.length === 0 ? (
-          <div className="grid gap-3">
-            {Array.from({ length: 3 }).map((_, idx) => (
-              <Skeleton key={idx} className="h-18 w-full rounded-xl" />
-            ))}
-          </div>
-        ) : analyses.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
-            Nie masz jeszcze zapisanych analiz. Wgraj pierwszy plik CSV powyżej, aby rozpocząć.
-          </div>
-        ) : (
-          <ul className="grid gap-2.5">
-            {analyses.map((item) => {
-              const isSelected = item.id === selectedId;
-              const isRowLoading = item.id === loadingId;
+    <div className="grid gap-3">
+      {items.map((item) => {
+        const isSelected = item.id === selectedId;
+        const isLoadingThis = item.id === loadingId;
 
-              return (
-                <li key={item.id}>
-                  <button
-                    type="button"
-                    onClick={() => onSelect(item.id)}
-                    disabled={isRowLoading}
-                    aria-current={isSelected ? "true" : undefined}
-                    className={cn(
-                      "group flex w-full flex-col gap-3 rounded-xl border px-4 py-3.5 text-left transition-all outline-none sm:flex-row sm:items-center sm:justify-between",
-                      "focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
-                      isSelected
-                        ? "border-primary/60 bg-primary/10 ring-1 ring-primary/30"
-                        : "border-border/70 bg-background/40 hover:border-primary/40 hover:bg-background/80",
-                    )}
-                  >
-                    <div className="flex min-w-0 items-center gap-3">
-                      <span
-                        className={cn(
-                          "flex size-10 shrink-0 items-center justify-center rounded-lg ring-1 transition-colors",
-                          isSelected
-                            ? "bg-primary text-primary-foreground ring-primary"
-                            : "bg-primary/10 text-primary ring-primary/25",
-                        )}
-                      >
-                        {isRowLoading ? (
-                          <Loader2 className="size-4.5 animate-spin" />
-                        ) : (
-                          <FileSpreadsheet className="size-4.5" />
-                        )}
-                      </span>
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="truncate font-medium" title={item.filename}>
-                            {item.filename}
-                          </span>
-                          {isSelected && (
-                            <Badge variant="default" className="h-4.5 px-1.5 text-[10px]">
-                              <CheckCircle2 className="size-3" />
-                              Wybrana
-                            </Badge>
-                          )}
-                        </div>
-                        <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-                          <Calendar className="size-3" />
-                          {formatDateTime(item.created_at)}
-                        </p>
-                      </div>
-                    </div>
+        return (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => onSelect(item.id)}
+            disabled={isLoadingThis}
+            className={cn(
+              "group flex w-full cursor-pointer flex-col justify-between gap-4 rounded-xl border p-4 text-left transition-all sm:flex-row sm:items-center",
+              "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+              isSelected
+                ? "border-primary/60 bg-primary/10 shadow-md shadow-primary/5"
+                : "border-border/70 bg-card/70 hover:border-primary/35 hover:bg-card",
+            )}
+          >
+            <div className="flex items-start gap-3.5">
+              <span
+                className={cn(
+                  "mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl ring-1 transition-colors",
+                  isSelected
+                    ? "bg-primary/20 text-primary ring-primary/40"
+                    : "bg-secondary/70 text-muted-foreground ring-border group-hover:text-foreground",
+                )}
+              >
+                {isLoadingThis ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <FileSpreadsheet className="size-4" aria-hidden="true" />
+                )}
+              </span>
 
-                    <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs sm:justify-end">
-                      <div className="flex items-center gap-1.5 text-muted-foreground">
-                        <Users className="size-3.5" />
-                        <span>Klienci:</span>
-                        <span className="font-medium text-foreground tabular-nums">
-                          {formatNumber(item.rows_count)}
-                        </span>
-                      </div>
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-heading text-sm font-semibold text-foreground">
+                    {item.filename}
+                  </span>
 
-                      <div className="flex items-center gap-1.5 text-muted-foreground">
-                        <AlertTriangle className="size-3.5 text-risk-high" />
-                        <span>Zagrożeni:</span>
-                        <span className="font-semibold text-risk-high tabular-nums">
-                          {formatNumber(item.high_risk_count)}
-                        </span>
-                      </div>
+                  {isSelected ? (
+                    <Badge className="bg-primary/20 text-[11px] text-primary hover:bg-primary/20">
+                      Currently viewing
+                    </Badge>
+                  ) : null}
 
-                      <div className="flex items-center gap-1.5 text-muted-foreground">
-                        <span>Średnie ryzyko:</span>
-                        <span className="font-semibold text-foreground tabular-nums">
-                          {formatPercent(item.avg_churn_probability)}
-                        </span>
-                      </div>
-                    </div>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
+                  <span className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-background/60 px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+                    <CheckCircle2
+                      className="size-3 text-primary"
+                      aria-hidden="true"
+                    />
+                    {item.status}
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs text-muted-foreground">
+                  <span className="inline-flex items-center gap-1">
+                    <Clock className="size-3" aria-hidden="true" />
+                    {formatDateTime(item.created_at)}
+                  </span>
+                  <span>•</span>
+                  <span>ID: {item.id.slice(0, 8)}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+              <div className="flex items-center gap-1.5 rounded-lg border border-border/70 bg-background/60 px-3 py-1.5 text-xs">
+                <Users
+                  className="size-3.5 text-muted-foreground"
+                  aria-hidden="true"
+                />
+                <span className="text-muted-foreground">Members:</span>
+                <span className="font-mono font-semibold text-foreground">
+                  {formatInteger(item.rows_count)}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-1.5 text-xs">
+                <AlertTriangle
+                  className="size-3.5 text-rose-400"
+                  aria-hidden="true"
+                />
+                <span className="text-rose-200/80">At-risk:</span>
+                <span className="font-mono font-semibold text-rose-300">
+                  {formatInteger(item.high_risk_count)}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1.5 rounded-lg border border-border/70 bg-background/60 px-3 py-1.5 text-xs">
+                <Gauge
+                  className="size-3.5 text-amber-400"
+                  aria-hidden="true"
+                />
+                <span className="text-muted-foreground">Avg. risk:</span>
+                <span className="font-mono font-semibold text-foreground">
+                  {formatProbabilityPercent(item.avg_churn_probability)}
+                </span>
+              </div>
+            </div>
+          </button>
+        );
+      })}
+    </div>
   );
 }

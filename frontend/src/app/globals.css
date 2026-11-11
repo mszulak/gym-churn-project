@@ -86,7 +86,6 @@
   --sidebar-ring: oklch(0.708 0 0);
 }
 
-/* Gym Churn Analysis — ciemny motyw z akcentem szmaragdowym */
 .dark {
   --background: oklch(0.155 0.014 260);
   --foreground: oklch(0.975 0.004 260);
@@ -139,7 +138,6 @@
   }
 }
 
-/* Dekoracyjne tło: delikatna siatka wygaszana ku dołowi */
 @utility bg-grid {
   background-image:
     linear-gradient(to right, oklch(1 0 0 / 4%) 1px, transparent 1px),
@@ -148,7 +146,6 @@
   mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, black 40%, transparent 100%);
 }
 
-/* Poświata w kolorze akcentu */
 @utility bg-glow {
   background:
     radial-gradient(40rem 20rem at 50% -5%, oklch(0.78 0.165 162 / 18%), transparent 70%),

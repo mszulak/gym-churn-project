@@ -1,51 +1,69 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { ApiError, ApiUnavailableError, apiRequest } from "@/lib/api";
-import { getSessionToken } from "@/lib/auth/session";
-import type { AnalysisJobDetailResponse } from "@/lib/analysis";
+import { getApiBaseUrl, extractApiErrorMessage } from "@/lib/api";
+import { SESSION_COOKIE_NAME } from "@/lib/auth/constants";
+
+interface RouteContext {
+  params: Promise<{
+    jobId: string;
+  }>;
+}
 
 /**
- * Proxy `GET /api/analyses/{job_id}` → FastAPI `GET /api/analyses/{job_id}`.
- * Przekazuje token z ciasteczka `HttpOnly` w nagłówku `Authorization: Bearer`.
+ * Proxies `GET /api/analyses/{job_id}` to FastAPI using the HttpOnly `session_token` cookie.
  */
-export async function GET(
-  _request: NextRequest,
-  context: { params: Promise<{ jobId: string }> },
-) {
-  const token = await getSessionToken();
+export async function GET(request: NextRequest, context: RouteContext) {
+  const token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
+
   if (!token) {
     return NextResponse.json(
-      { error: "Sesja wygasła. Zaloguj się ponownie." },
+      { detail: "Your session has expired. Please sign in again." },
       { status: 401 },
     );
   }
 
   const { jobId } = await context.params;
-  if (!jobId) {
-    return NextResponse.json({ error: "Brak identyfikatora analizy." }, { status: 400 });
-  }
+  const backendUrl = `${getApiBaseUrl()}/api/analyses/${encodeURIComponent(jobId)}`;
 
   try {
-    const detail = await apiRequest<AnalysisJobDetailResponse>(
-      `/api/analyses/${encodeURIComponent(jobId)}`,
-      { token },
-    );
-    return NextResponse.json(detail, {
-      headers: { "Cache-Control": "no-store" },
+    const backendResponse = await fetch(backendUrl, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      },
+      cache: "no-store",
     });
-  } catch (error) {
-    if (error instanceof ApiError) {
-      return NextResponse.json(
-        { error: error.message || "Nie udało się pobrać szczegółów analizy." },
-        { status: error.status },
+
+    const contentType = backendResponse.headers.get("content-type") ?? "";
+    const payload = contentType.includes("application/json")
+      ? await backendResponse.json()
+      : await backendResponse.text();
+
+    if (!backendResponse.ok) {
+      const message = extractApiErrorMessage(
+        payload,
+        `Failed to fetch analysis details (${backendResponse.status}).`,
       );
+      const response = NextResponse.json(
+        { detail: message },
+        { status: backendResponse.status },
+      );
+
+      if (backendResponse.status === 401) {
+        response.cookies.delete(SESSION_COOKIE_NAME);
+      }
+
+      return response;
     }
-    if (error instanceof ApiUnavailableError) {
-      return NextResponse.json({ error: error.message }, { status: 502 });
-    }
-    console.error("[analyses/detail] Nieoczekiwany błąd:", error);
+
+    return NextResponse.json(payload, { status: 200 });
+  } catch (error) {
+    console.error(`[api/analyses/${jobId}] Failed to connect to ${backendUrl}:`, error);
     return NextResponse.json(
-      { error: "Wystąpił błąd podczas pobierania szczegółów analizy." },
-      { status: 500 },
+      {
+        detail: `Cannot connect to the FastAPI server (${getApiBaseUrl()}).`,
+      },
+      { status: 503 },
     );
   }
 }

@@ -1,95 +1,92 @@
 import { redirect } from "next/navigation";
-import { Building2, LogOut, WifiOff } from "lucide-react";
-import { ApiError, ApiUnavailableError } from "@/lib/api";
-import { getCurrentUser } from "@/lib/auth/dal";
+import { AlertTriangle, Dumbbell, LogOut, Mail } from "lucide-react";
+import { ApiError, ApiUnavailableError, type UserResponse } from "@/lib/api";
 import { logoutAction } from "@/lib/auth/actions";
-import { SIGNOUT_PATH, type User } from "@/lib/auth/constants";
-import { SubmitButton } from "@/components/auth/submit-button";
-import { Skeleton } from "@/components/ui/skeleton";
+import { AUTH_ROUTES } from "@/lib/auth/constants";
+import { getCurrentUser } from "@/lib/auth/dal";
+import { getSessionToken } from "@/lib/auth/session";
+import { Button } from "@/components/ui/button";
 
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  return (parts[0]?.[0] ?? "?").concat(parts[1]?.[0] ?? "").toUpperCase();
-}
-
-function LogoutButton() {
-  return (
-    <form action={logoutAction}>
-      <SubmitButton variant="outline" size="lg" pendingText="Wylogowywanie…">
-        <LogOut />
-        Wyloguj
-      </SubmitButton>
-    </form>
-  );
-}
-
-/**
- * Dane zalogowanego właściciela + wylogowanie.
- * Czyta sesję (cookies) → musi być renderowany wewnątrz <Suspense>.
- * Przy nieważnym tokenie przekierowuje na /auth/signout (czyści ciasteczko).
- */
 export async function UserMenu() {
-  let user: User | null;
+  const token = await getSessionToken();
+
+  if (!token) {
+    return null;
+  }
+
+  let user: UserResponse | null = null;
+  let backendOffline = false;
+
   try {
     user = await getCurrentUser();
   } catch (error) {
-    // Przepuszczamy wewnętrzne wyjątki sterujące Next.js / Reacta (np. HANGING_PROMISE_REJECTION przy prerenderze cookies())
-    if (!(error instanceof ApiUnavailableError) && !(error instanceof ApiError)) {
+    // Rethrow internal Next.js control errors (such as HANGING_PROMISE_REJECTION during static prerendering).
+    if (
+      !(error instanceof ApiUnavailableError) &&
+      !(error instanceof ApiError)
+    ) {
       throw error;
     }
-    console.error("[auth] Nie udało się pobrać użytkownika:", error);
-    return (
-      <div className="flex items-center gap-3">
-        <span className="hidden items-center gap-1.5 text-xs text-risk-medium sm:flex">
-          <WifiOff className="size-3.5" />
-          Brak połączenia z serwerem
-        </span>
-        <LogoutButton />
-      </div>
-    );
+
+    console.error("[layout:UserMenu] Failed to fetch user profile:", error);
+    backendOffline = true;
   }
 
-  // redirect() rzuca wyjątek sterujący — poza try/catch
-  if (!user) redirect(SIGNOUT_PATH);
+  // Redirect outside try/catch so Next.js redirect control errors are not swallowed.
+  if (!backendOffline && !user) {
+    redirect(AUTH_ROUTES.signout);
+  }
 
   return (
-    <div className="flex items-center gap-3">
-      <div className="hidden items-center gap-3 sm:flex">
-        <span
-          aria-hidden
-          className="flex size-9 items-center justify-center rounded-full bg-accent text-xs font-semibold text-accent-foreground ring-1 ring-border"
-        >
-          {initials(user.gym_name)}
-        </span>
-        <div className="min-w-0 text-right leading-tight">
-          <p className="flex max-w-56 items-center justify-end gap-1.5 truncate text-sm font-medium">
-            <Building2 className="size-3.5 shrink-0 text-primary" />
-            <span className="truncate" title={user.gym_name}>
+    <div className="flex items-center gap-2.5 sm:gap-3">
+      {user ? (
+        <div className="flex items-center gap-2.5 rounded-xl border border-border/70 bg-card/70 px-3 py-1.5">
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary ring-1 ring-primary/30">
+            <Dumbbell className="size-3.5" aria-hidden="true" />
+          </span>
+          <div className="flex flex-col text-left leading-tight">
+            <span className="max-w-36 truncate font-heading text-xs font-semibold text-foreground sm:max-w-52">
               {user.gym_name}
             </span>
-          </p>
-          <p className="max-w-56 truncate text-xs text-muted-foreground" title={user.email}>
-            {user.email}
-          </p>
+            <span className="hidden items-center gap-1 font-mono text-[11px] text-muted-foreground sm:inline-flex">
+              <Mail className="size-2.5 shrink-0" aria-hidden="true" />
+              <span className="max-w-52 truncate">{user.email}</span>
+            </span>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div
+          title="Cannot reach GET /api/auth/me on the FastAPI backend"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/35 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-300"
+        >
+          <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
+          <span className="hidden sm:inline">API offline</span>
+        </div>
+      )}
 
-      <LogoutButton />
+      <form action={logoutAction}>
+        <Button
+          type="submit"
+          variant="outline"
+          size="sm"
+          className="cursor-pointer gap-1.5 text-xs"
+        >
+          <LogOut className="size-3.5" aria-hidden="true" />
+          <span>Sign out</span>
+        </Button>
+      </form>
     </div>
   );
 }
 
 export function UserMenuSkeleton() {
   return (
-    <div className="flex items-center gap-3" aria-label="Wczytywanie danych konta">
-      <div className="hidden items-center gap-3 sm:flex">
-        <Skeleton className="size-9 rounded-full" />
-        <div className="grid justify-items-end gap-1.5">
-          <Skeleton className="h-3.5 w-28" />
-          <Skeleton className="h-3 w-36" />
-        </div>
-      </div>
-      <Skeleton className="h-9 w-24 rounded-lg" />
+    <div
+      aria-label="Loading user profile"
+      className="flex items-center gap-2.5"
+    >
+      <div className="h-9 w-36 animate-pulse rounded-xl border border-border/50 bg-card/50 sm:w-48" />
+      <div className="h-7 w-20 animate-pulse rounded-lg border border-border/50 bg-card/50" />
     </div>
   );
 }

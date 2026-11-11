@@ -1,26 +1,80 @@
-import "server-only";
-
-/**
- * Klient HTTP do backendu FastAPI. Używany WYŁĄCZNIE po stronie serwera
- * (Server Actions, Route Handlers, Server Components) — token nigdy nie trafia do przeglądarki.
- */
-
 export const API_URL = (
   process.env.API_URL ||
   process.env.NEXT_PUBLIC_API_URL ||
   "http://localhost:8000"
 ).replace(/\/+$/, "");
 
+export function getApiBaseUrl(): string {
+  return API_URL;
+}
+
 export function apiUrl(path: string): string {
   return `${API_URL}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
-/** Błąd zwrócony przez API (status HTTP != 2xx). */
+export interface RegisterRequest {
+  email: string;
+  password: string;
+  gym_name: string;
+}
+
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+export interface TokenResponse {
+  access_token: string;
+  token_type: string;
+}
+
+export interface UserResponse {
+  id: string;
+  email: string;
+  gym_name: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface PredictionRecord {
+  id?: string;
+  client_index: number;
+  churn_probability: number;
+  uncertainty_low: number | null;
+  uncertainty_high: number | null;
+  predicted_days_to_churn: number | null;
+  raw_features: Record<string, unknown>;
+}
+
+export interface UploadAnalysisResponse {
+  job_id: string;
+  filename: string;
+  rows: number;
+  high_risk_count: number;
+  avg_churn_probability: number;
+  columns?: string[];
+  status: string;
+  top_10_risk: Array<Record<string, unknown>>;
+}
+
+export interface AnalysisSummaryItem {
+  id: string;
+  filename: string;
+  status: string;
+  rows_count: number;
+  high_risk_count: number;
+  avg_churn_probability: number;
+  created_at: string;
+}
+
+export interface AnalysisDetailResponse extends AnalysisSummaryItem {
+  predictions: PredictionRecord[];
+}
+
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
-    /** Błędy walidacji pól z odpowiedzi 422 FastAPI: { nazwa_pola: komunikat }. */
     public readonly fieldErrors: Record<string, string> = {},
   ) {
     super(message);
@@ -28,10 +82,9 @@ export class ApiError extends Error {
   }
 }
 
-/** Backend nieosiągalny (błąd sieci, timeout). */
 export class ApiUnavailableError extends Error {
   constructor(cause?: unknown) {
-    super("Nie udało się połączyć z serwerem. Spróbuj ponownie za chwilę.");
+    super("Could not connect to the backend server. Please try again shortly.");
     this.name = "ApiUnavailableError";
     this.cause = cause;
   }
@@ -42,68 +95,83 @@ interface FastApiValidationItem {
   msg?: string;
 }
 
-/**
- * Wyciąga czytelny komunikat z odpowiedzi błędu FastAPI.
- * Obsługuje `{ detail: "..." }`, `{ detail: [{ loc, msg }] }` (422) oraz `{ error: "..." }`.
- */
+export function extractApiErrorMessage(
+  payload: unknown,
+  fallback = "An error occurred while communicating with the server.",
+): string {
+  if (!payload) return fallback;
+  if (typeof payload === "string") return payload.trim() || fallback;
+
+  if (typeof payload === "object") {
+    const { detail, error, message } = payload as Record<string, unknown>;
+    if (typeof detail === "string" && detail.trim()) return detail.trim();
+    if (Array.isArray(detail) && detail.length > 0) {
+      const first = detail[0] as FastApiValidationItem | undefined;
+      if (first?.msg) return first.msg;
+    }
+    if (typeof error === "string" && error.trim()) return error.trim();
+    if (typeof message === "string" && message.trim()) return message.trim();
+  }
+
+  return fallback;
+}
+
+/** Normalizes FastAPI error payloads (`detail` string, 422 validation list, or `error` field). */
 async function toApiError(response: Response): Promise<ApiError> {
   let body: unknown = null;
   try {
     body = await response.json();
   } catch {
-    // brak JSON — zostaje komunikat domyślny
+    // Non-JSON error response
   }
 
   const fieldErrors: Record<string, string> = {};
-  let message = "";
-
   if (body && typeof body === "object") {
-    const { detail, error, message: msg } = body as Record<string, unknown>;
-    if (typeof detail === "string") {
-      message = detail;
-    } else if (Array.isArray(detail)) {
+    const { detail } = body as Record<string, unknown>;
+    if (Array.isArray(detail)) {
       for (const item of detail as FastApiValidationItem[]) {
         const field = item.loc?.[item.loc.length - 1];
         if (typeof field === "string" && item.msg && !fieldErrors[field]) {
           fieldErrors[field] = item.msg;
         }
       }
-      message = (detail as FastApiValidationItem[])[0]?.msg ?? "";
-    } else if (typeof error === "string") {
-      message = error;
-    } else if (typeof msg === "string") {
-      message = msg;
     }
   }
+
+  const message = extractApiErrorMessage(
+    body,
+    `Server returned an error (${response.status}).`,
+  );
 
   return new ApiError(response.status, message, fieldErrors);
 }
 
-interface ApiRequestOptions extends Omit<RequestInit, "body"> {
+interface ApiFetchOptions extends RequestInit {
   token?: string;
-  json?: unknown;
-  /** Domyślnie 15 s. */
   timeoutMs?: number;
 }
 
-/**
- * Wykonuje żądanie do FastAPI i zwraca sparsowany JSON.
- * Rzuca `ApiError` dla statusów != 2xx i `ApiUnavailableError` przy błędach sieci.
- */
-export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
-  const { token, json, timeoutMs = 15_000, headers, ...init } = options;
+export async function apiFetch<T>(
+  path: string,
+  options: ApiFetchOptions = {},
+): Promise<T> {
+  const { token, timeoutMs = 15_000, headers, body, ...init } = options;
 
   const requestHeaders = new Headers(headers);
   requestHeaders.set("Accept", "application/json");
-  if (json !== undefined) requestHeaders.set("Content-Type", "application/json");
-  if (token) requestHeaders.set("Authorization", `Bearer ${token}`);
+  if (body !== undefined && !(body instanceof FormData) && !requestHeaders.has("Content-Type")) {
+    requestHeaders.set("Content-Type", "application/json");
+  }
+  if (token) {
+    requestHeaders.set("Authorization", `Bearer ${token}`);
+  }
 
   let response: Response;
   try {
     response = await fetch(apiUrl(path), {
       ...init,
       headers: requestHeaders,
-      body: json !== undefined ? JSON.stringify(json) : undefined,
+      body,
       cache: "no-store",
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -115,6 +183,9 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     throw await toApiError(response);
   }
 
-  if (response.status === 204) return undefined as T;
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
   return (await response.json()) as T;
 }

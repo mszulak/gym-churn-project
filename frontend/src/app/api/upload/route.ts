@@ -1,71 +1,90 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { apiUrl } from "@/lib/api";
-import { getSessionToken } from "@/lib/auth/session";
-import { uploadConfig } from "@/config/site";
+import { getApiBaseUrl, extractApiErrorMessage } from "@/lib/api";
+import { SESSION_COOKIE_NAME } from "@/lib/auth/constants";
 
 /**
- * Proxy uploadu CSV → FastAPI `POST /api/upload`.
- *
- * Przeglądarka wysyła multipart/form-data na ten endpoint (ten sam origin, ciasteczko
- * HttpOnly dołączane automatycznie). Tu odczytujemy token z ciasteczka i przekazujemy
- * żądanie dalej z nagłówkiem `Authorization: Bearer <token>`. Body jest strumieniowane
- * bez buforowania w pamięci.
+ * Proxies CSV file uploads to FastAPI (`POST /api/upload`), attaching the
+ * `Authorization: Bearer <session_token>` header from the HttpOnly cookie.
  */
-
-/** Zapas na nagłówki multipart ponad sam plik. */
-const MAX_BODY_BYTES = uploadConfig.maxFileSizeBytes + 1024 * 1024;
-
-function jsonError(status: number, error: string) {
-  return NextResponse.json({ error }, { status });
-}
-
 export async function POST(request: NextRequest) {
-  const token = await getSessionToken();
+  const token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
+
   if (!token) {
-    return jsonError(401, "Sesja wygasła. Zaloguj się ponownie.");
+    return NextResponse.json(
+      { detail: "Your session has expired. Please sign in again." },
+      { status: 401 },
+    );
   }
 
-  const contentType = request.headers.get("content-type") ?? "";
-  if (!contentType.toLowerCase().startsWith("multipart/form-data")) {
-    return jsonError(415, "Oczekiwano danych typu multipart/form-data.");
-  }
-
-  const contentLength = Number(request.headers.get("content-length") ?? 0);
-  if (contentLength > MAX_BODY_BYTES) {
-    return jsonError(413, "Plik jest za duży.");
-  }
-
-  if (!request.body) {
-    return jsonError(400, "Brak pliku w żądaniu.");
-  }
-
-  let upstream: Response;
+  let incomingFormData: FormData;
   try {
-    upstream = await fetch(apiUrl("/api/upload"), {
+    incomingFormData = await request.formData();
+  } catch (error) {
+    console.error("[api/upload] Failed to parse multipart/form-data:", error);
+    return NextResponse.json(
+      {
+        detail:
+          "Failed to read the uploaded file (it may exceed the size limit or have an invalid format).",
+      },
+      { status: 400 },
+    );
+  }
+
+  const file = incomingFormData.get("file");
+  if (!(file instanceof Blob)) {
+    return NextResponse.json(
+      { detail: "No CSV file was attached in the 'file' field." },
+      { status: 400 },
+    );
+  }
+
+  const outboundFormData = new FormData();
+  const fileName = file instanceof File && file.name ? file.name : "clients.csv";
+  outboundFormData.append("file", file, fileName);
+
+  const backendUrl = `${getApiBaseUrl()}/api/upload`;
+
+  try {
+    const backendResponse = await fetch(backendUrl, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
-        "Content-Type": contentType, // zawiera boundary multipart
         Accept: "application/json",
-        ...(contentLength ? { "Content-Length": String(contentLength) } : {}),
       },
-      body: request.body,
+      body: outboundFormData,
       cache: "no-store",
-      signal: AbortSignal.timeout(5 * 60_000),
-      // wymagane przez fetch w Node.js przy strumieniowym body
-      duplex: "half",
-    } as RequestInit & { duplex: "half" });
-  } catch (error) {
-    console.error("[upload] Backend nieosiągalny:", error);
-    return jsonError(502, "Nie udało się połączyć z serwerem analizy. Spróbuj ponownie.");
-  }
+    });
 
-  const body = await upstream.text();
-  return new NextResponse(body, {
-    status: upstream.status,
-    headers: {
-      "Content-Type": upstream.headers.get("content-type") ?? "application/json",
-      "Cache-Control": "no-store",
-    },
-  });
+    const contentType = backendResponse.headers.get("content-type") ?? "";
+    const payload = contentType.includes("application/json")
+      ? await backendResponse.json()
+      : await backendResponse.text();
+
+    if (!backendResponse.ok) {
+      const message = extractApiErrorMessage(
+        payload,
+        `FastAPI server returned an error (${backendResponse.status}).`,
+      );
+      const response = NextResponse.json(
+        { detail: message },
+        { status: backendResponse.status },
+      );
+
+      if (backendResponse.status === 401) {
+        response.cookies.delete(SESSION_COOKIE_NAME);
+      }
+
+      return response;
+    }
+
+    return NextResponse.json(payload, { status: backendResponse.status });
+  } catch (error) {
+    console.error(`[api/upload] Failed to connect to ${backendUrl}:`, error);
+    return NextResponse.json(
+      {
+        detail: `Cannot connect to the FastAPI server (${getApiBaseUrl()}). Make sure the backend is running.`,
+      },
+      { status: 503 },
+    );
+  }
 }

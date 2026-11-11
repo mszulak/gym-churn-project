@@ -1,320 +1,360 @@
 "use client";
 
-import { useCallback, useId, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   AlertCircle,
+  CheckCircle2,
   FileSpreadsheet,
   Loader2,
-  Lock,
-  Sparkles,
+  RefreshCw,
+  Send,
+  Trash2,
   Upload,
-  X,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { Button, buttonVariants } from "@/components/ui/button";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { uploadConfig } from "@/config/site";
-import { parseCsvPreview, validateCsvFile, type CsvPreview } from "@/lib/csv";
-import { describeDelimiter, formatFileSize, formatNumber } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import {
-  SessionExpiredError,
-  redirectToSignout,
-  uploadForAnalysis,
-  type UploadAnalysisResponse,
-} from "@/lib/analysis";
+  MAX_CSV_SIZE_BYTES,
+  parseCsvPreview,
+  validateCsvFile,
+  type CsvPreviewData,
+} from "@/lib/csv";
+import { formatBytes, formatDelimiterLabel, formatInteger } from "@/lib/format";
+import { AUTH_ROUTES } from "@/lib/auth/constants";
+import type { UploadAnalysisResponse } from "@/lib/api";
 import { CsvPreviewTable } from "./csv-preview-table";
 
-type UploadState =
-  | { status: "idle" }
-  | { status: "parsing"; file: File }
-  | { status: "ready"; file: File; preview: CsvPreview }
-  | { status: "error"; message: string; file?: File };
-
-type SendingState =
-  | { status: "idle" }
-  | { status: "sending" }
-  | { status: "done" }
-  | { status: "error"; message: string };
-
 interface CsvUploadProps {
-  onAnalysisCompleted?: (result: UploadAnalysisResponse) => void;
+  onUploadSuccess?: (result: UploadAnalysisResponse) => void;
 }
 
-export function CsvUpload({ onAnalysisCompleted }: CsvUploadProps) {
+export function CsvUpload({ onUploadSuccess }: CsvUploadProps) {
+  const router = useRouter();
   const inputId = useId();
-  const inputRef = useRef<HTMLInputElement>(null);
-  const parseToken = useRef(0);
-  const abortRef = useRef<AbortController | null>(null);
-  const [state, setState] = useState<UploadState>({ status: "idle" });
-  const [sending, setSending] = useState<SendingState>({ status: "idle" });
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [isDragging, setIsDragging] = useState(false);
-
-  const cancelSending = useCallback(() => {
-    abortRef.current?.abort();
-    abortRef.current = null;
-    setSending({ status: "idle" });
-  }, []);
-
-  const handleFile = useCallback(
-    async (file: File) => {
-      const token = ++parseToken.current;
-      cancelSending();
-
-      const validationError = validateCsvFile(file);
-      if (validationError) {
-        setState({ status: "error", message: validationError, file });
-        return;
-      }
-
-      setState({ status: "parsing", file });
-      try {
-        const preview = await parseCsvPreview(file);
-        if (token !== parseToken.current) return;
-        setState({ status: "ready", file, preview });
-      } catch (err) {
-        if (token !== parseToken.current) return;
-        const message = err instanceof Error ? err.message : "Nieznany błąd.";
-        setState({ status: "error", message, file });
-      }
-    },
-    [cancelSending],
+  const [isParsing, setIsParsing] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<CsvPreviewData | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [uploadSuccessFilename, setUploadSuccessFilename] = useState<string | null>(
+    null,
   );
 
-  const reset = useCallback(() => {
-    parseToken.current++;
-    cancelSending();
-    setState({ status: "idle" });
-    if (inputRef.current) inputRef.current.value = "";
-  }, [cancelSending]);
+  async function processFile(file: File) {
+    setErrorMessage(null);
+    setUploadSuccessFilename(null);
 
-  const analyze = useCallback(async () => {
-    if (state.status !== "ready") return;
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
+    const validationError = validateCsvFile(file);
+    if (validationError) {
+      setSelectedFile(null);
+      setPreview(null);
+      setErrorMessage(validationError);
+      return;
+    }
 
-    setSending({ status: "sending" });
+    setIsParsing(true);
     try {
-      const result = await uploadForAnalysis(state.file, controller.signal);
-      if (controller.signal.aborted) return;
-      setSending({ status: "done" });
-      onAnalysisCompleted?.(result);
-    } catch (err) {
-      if (controller.signal.aborted) return;
-      if (err instanceof SessionExpiredError) {
-        redirectToSignout();
+      const parsedPreview = await parseCsvPreview(file);
+      setSelectedFile(file);
+      setPreview(parsedPreview);
+    } catch (error) {
+      setSelectedFile(null);
+      setPreview(null);
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Failed to read the selected CSV file.",
+      );
+    } finally {
+      setIsParsing(false);
+    }
+  }
+
+  function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (file) {
+      void processFile(file);
+    }
+    event.target.value = "";
+  }
+
+  function handleDragOver(event: React.DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!isDragging) {
+      setIsDragging(true);
+    }
+  }
+
+  function handleDragLeave(event: React.DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDragging(false);
+  }
+
+  function handleDrop(event: React.DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDragging(false);
+
+    const file = event.dataTransfer.files?.[0];
+    if (file) {
+      void processFile(file);
+    }
+  }
+
+  function handleClear() {
+    setSelectedFile(null);
+    setPreview(null);
+    setErrorMessage(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  }
+
+  function openFileDialog() {
+    fileInputRef.current?.click();
+  }
+
+  async function handleSubmitToBackend() {
+    if (!selectedFile || isUploading) {
+      return;
+    }
+
+    setIsUploading(true);
+    setErrorMessage(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+
+      const response = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const contentType = response.headers.get("content-type") ?? "";
+      const payload = contentType.includes("application/json")
+        ? await response.json()
+        : null;
+
+      if (response.status === 401) {
+        router.push(`${AUTH_ROUTES.login}?expired=1`);
+        router.refresh();
         return;
       }
-      const message = err instanceof Error ? err.message : "Nieznany błąd.";
-      setSending({ status: "error", message });
+
+      if (!response.ok) {
+        const detail =
+          payload && typeof payload.detail === "string"
+            ? payload.detail
+            : `Upload error (${response.status}).`;
+        setErrorMessage(detail);
+        return;
+      }
+
+      const uploadedResult = payload as UploadAnalysisResponse;
+      setUploadSuccessFilename(uploadedResult.filename || selectedFile.name);
+      setSelectedFile(null);
+      setPreview(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+
+      onUploadSuccess?.(uploadedResult);
+    } catch {
+      setErrorMessage(
+        "An error occurred while sending the file to the server. Check your connection and try again.",
+      );
     } finally {
-      if (abortRef.current === controller) abortRef.current = null;
+      setIsUploading(false);
     }
-  }, [state, onAnalysisCompleted]);
-
-  const openFilePicker = () => inputRef.current?.click();
-
-  const onDrop = (event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    setIsDragging(false);
-    const file = event.dataTransfer.files?.[0];
-    if (file) void handleFile(file);
-  };
-
-  const onDragOver = (event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    if (!isDragging) setIsDragging(true);
-  };
-
-  const onDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
-    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-      setIsDragging(false);
-    }
-  };
-
-  const hasFile = state.status === "ready" || state.status === "parsing";
+  }
 
   return (
-    <div className="flex w-full flex-col gap-5">
-      <input
-        ref={inputRef}
-        id={inputId}
-        type="file"
-        accept={uploadConfig.acceptedExtensions.join(",") + ",text/csv"}
-        className="sr-only"
-        tabIndex={-1}
-        onChange={(event) => {
-          const file = event.target.files?.[0];
-          if (file) void handleFile(file);
-          event.target.value = "";
-        }}
-      />
+    <Card className="border-border/80 bg-card/80 shadow-xl backdrop-blur-sm">
+      <CardContent className="p-5 sm:p-6">
+        <input
+          ref={fileInputRef}
+          id={inputId}
+          type="file"
+          accept=".csv,text/csv"
+          onChange={handleFileChange}
+          className="sr-only"
+        />
 
-      {!hasFile && (
-        <div
-          role="button"
-          tabIndex={0}
-          aria-label="Wgraj plik CSV z danymi klientów"
-          onClick={openFilePicker}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              openFilePicker();
-            }
-          }}
-          onDrop={onDrop}
-          onDragOver={onDragOver}
-          onDragLeave={onDragLeave}
-          className={cn(
-            "group relative flex flex-col items-center justify-center gap-5 overflow-hidden rounded-2xl border-2 border-dashed px-6 py-10 text-center transition-all outline-none sm:py-12",
-            "bg-card/40 backdrop-blur-sm hover:border-primary/60 hover:bg-card/70",
-            "focus-visible:border-primary focus-visible:ring-4 focus-visible:ring-primary/20",
-            isDragging
-              ? "scale-[1.01] border-primary bg-primary/5"
-              : "border-border",
-          )}
-        >
-          <div
-            className={cn(
-              "flex size-16 items-center justify-center rounded-2xl bg-primary/10 text-primary ring-1 ring-primary/30 transition-transform",
-              "group-hover:scale-105",
-              isDragging && "scale-110",
-            )}
-          >
-            <Upload className="size-8" strokeWidth={1.75} />
-          </div>
-
-          <div className="space-y-1.5">
-            <p className="text-lg font-semibold tracking-tight sm:text-xl">
-              {isDragging ? "Upuść plik tutaj" : "Przeciągnij i upuść plik CSV"}
-            </p>
-            <p className="text-sm text-muted-foreground">
-              lub skorzystaj z przycisku poniżej · maks.{" "}
-              {formatFileSize(uploadConfig.maxFileSizeBytes)}
-            </p>
-          </div>
-
-          <span
-            aria-hidden="true"
-            className={cn(
-              buttonVariants({ size: "lg" }),
-              "h-11 gap-2 rounded-xl px-7 text-base font-semibold shadow-lg shadow-primary/20 group-hover:bg-primary/90",
-            )}
-          >
-            <Upload className="size-5" />
-            Wgraj plik
-          </span>
-
-          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Lock className="size-3.5" />
-            Podgląd powstaje lokalnie — plik wysyłamy po kliknięciu „Analizuj”
-          </p>
-        </div>
-      )}
-
-      {state.status === "error" && (
-        <Alert variant="destructive" className="border-destructive/40">
-          <AlertCircle />
-          <AlertTitle>Nie można wczytać pliku</AlertTitle>
-          <AlertDescription>
-            {state.file && (
-              <span className="font-medium text-foreground">{state.file.name}: </span>
-            )}
-            {state.message}
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {hasFile && (
-        <Card className="bg-card/70 backdrop-blur-sm">
-          <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-center">
-            <div className="flex min-w-0 flex-1 items-center gap-4">
-              <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary ring-1 ring-primary/30">
-                {state.status === "parsing" ? (
-                  <Loader2 className="size-6 animate-spin" />
-                ) : (
-                  <FileSpreadsheet className="size-6" />
+        {!selectedFile || !preview ? (
+          <div className="space-y-4">
+            <label
+              htmlFor={inputId}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className={cn(
+                "group relative flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-8 text-center transition-all sm:px-10 sm:py-10",
+                "focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background",
+                isDragging
+                  ? "border-primary bg-primary/10"
+                  : "border-border/80 bg-background/40 hover:border-primary/50 hover:bg-secondary/30",
+              )}
+            >
+              <div
+                className={cn(
+                  "mb-3 flex size-12 items-center justify-center rounded-2xl border transition-transform duration-200 group-hover:scale-105",
+                  isDragging
+                    ? "border-primary/50 bg-primary/20 text-primary"
+                    : "border-primary/25 bg-primary/10 text-primary",
                 )}
+              >
+                <Upload className="size-6" aria-hidden="true" />
               </div>
-              <div className="min-w-0">
-                <p className="truncate font-medium" title={state.file.name}>
-                  {state.file.name}
-                </p>
-                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                  <span>{formatFileSize(state.file.size)}</span>
-                  {state.status === "parsing" && <span>Wczytywanie…</span>}
-                  {state.status === "ready" && (
-                    <>
-                      <span>{formatNumber(state.preview.totalRows)} wierszy</span>
-                      <span>{state.preview.columns.length} kolumn</span>
-                      <span>separator: {describeDelimiter(state.preview.delimiter)}</span>
-                    </>
-                  )}
+
+              <p className="font-heading text-base font-bold text-foreground sm:text-lg">
+                {isParsing
+                  ? "Processing CSV file..."
+                  : isDragging
+                    ? "Drop CSV file here"
+                    : "Select or drag & drop a member CSV file"}
+              </p>
+
+              <p className="mt-1 max-w-md text-xs text-muted-foreground sm:text-sm">
+                Supports <span className="font-mono text-foreground">.csv</span>{" "}
+                files up to {formatBytes(MAX_CSV_SIZE_BYTES)}. After selecting a
+                file, you can preview its structure and run the churn prediction.
+              </p>
+
+              <div className="mt-5">
+                <span className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary px-5 text-sm font-semibold text-primary-foreground shadow-md shadow-primary/20 transition-all group-hover:bg-primary/90">
+                  <Upload className="size-4" aria-hidden="true" />
+                  Choose CSV file
+                </span>
+              </div>
+            </label>
+
+            {uploadSuccessFilename ? (
+              <div
+                role="status"
+                className="flex items-center justify-between gap-3 rounded-xl border border-primary/35 bg-primary/10 p-3.5 text-xs text-primary"
+              >
+                <div className="flex items-center gap-2.5">
+                  <CheckCircle2 className="size-4 shrink-0" aria-hidden="true" />
+                  <span>
+                    Analysis for{" "}
+                    <strong className="font-mono font-semibold">
+                      {uploadSuccessFilename}
+                    </strong>{" "}
+                    completed and saved to your history.
+                  </span>
                 </div>
               </div>
+            ) : null}
+          </div>
+        ) : (
+          <div className="space-y-5">
+            <div className="flex flex-col justify-between gap-4 rounded-xl border border-primary/30 bg-primary/8 p-4 sm:flex-row sm:items-center">
+              <div className="flex items-start gap-3.5">
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-primary ring-1 ring-primary/30">
+                  <FileSpreadsheet className="size-5" aria-hidden="true" />
+                </span>
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-heading text-sm font-semibold text-foreground">
+                      {selectedFile.name}
+                    </p>
+                    <Badge className="bg-primary/20 text-primary hover:bg-primary/20">
+                      Ready to analyze
+                    </Badge>
+                  </div>
+                  <p className="font-mono text-xs text-muted-foreground">
+                    {formatBytes(selectedFile.size)} •{" "}
+                    {formatInteger(preview.totalRows)} clients •{" "}
+                    {preview.headers.length} columns •{" "}
+                    {formatDelimiterLabel(preview.delimiter)}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={openFileDialog}
+                  disabled={isUploading}
+                  className="cursor-pointer"
+                >
+                  <RefreshCw className="size-3.5" aria-hidden="true" />
+                  Change file
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleClear}
+                  disabled={isUploading}
+                  className="cursor-pointer text-muted-foreground hover:text-destructive"
+                >
+                  <Trash2 className="size-3.5" aria-hidden="true" />
+                  Remove
+                </Button>
+              </div>
             </div>
 
-            <div className="flex shrink-0 flex-wrap items-center gap-2">
-              <Button variant="outline" size="lg" onClick={reset}>
-                <X />
-                Usuń
-              </Button>
+            <CsvPreviewTable preview={preview} />
+
+            <div className="flex flex-col justify-between gap-3 rounded-xl border border-border/80 bg-secondary/40 p-4 sm:flex-row sm:items-center">
+              <div className="space-y-0.5 text-xs">
+                <p className="font-medium text-foreground">
+                  Run churn prediction in FastAPI
+                </p>
+                <p className="text-muted-foreground">
+                  The file will be analyzed and saved to PostgreSQL, and the Top 10
+                  at-risk members table below will update automatically.
+                </p>
+              </div>
+
               <Button
-                variant="outline"
+                type="button"
                 size="lg"
-                onClick={openFilePicker}
-                disabled={sending.status === "sending"}
+                onClick={handleSubmitToBackend}
+                disabled={isUploading}
+                className=" shrink-0 cursor-pointer font-semibold shadow-md shadow-primary/20"
               >
-                <Upload />
-                Zmień plik
-              </Button>
-              <Button
-                size="lg"
-                onClick={analyze}
-                disabled={state.status !== "ready" || sending.status === "sending"}
-                aria-busy={sending.status === "sending"}
-                className="gap-2"
-              >
-                {sending.status === "sending" ? (
+                {isUploading ? (
                   <>
-                    <Loader2 className="animate-spin" />
-                    Analizowanie…
+                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                    Analyzing CSV...
                   </>
                 ) : (
                   <>
-                    <Sparkles />
-                    {sending.status === "done" ? "Analizuj ponownie" : "Analizuj"}
+                    <Send className="size-4" aria-hidden="true" />
+                    Analyze CSV file
                   </>
                 )}
               </Button>
             </div>
-          </CardContent>
-        </Card>
-      )}
+          </div>
+        )}
 
-      {state.status === "ready" && state.preview.errorCount > 0 && (
-        <Alert className="border-risk-medium/40 text-risk-medium">
-          <AlertCircle />
-          <AlertTitle>Plik zawiera nieprawidłowe wiersze</AlertTitle>
-          <AlertDescription>
-            Wykryto {formatNumber(state.preview.errorCount)} problem(ów) podczas
-            odczytu (np. niezgodna liczba kolumn). Sprawdź plik przed analizą.
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {sending.status === "error" && (
-        <Alert variant="destructive" className="border-destructive/40" aria-live="polite">
-          <AlertCircle />
-          <AlertTitle>Analiza nie powiodła się</AlertTitle>
-          <AlertDescription>{sending.message}</AlertDescription>
-        </Alert>
-      )}
-
-      {state.status === "ready" && sending.status !== "done" && (
-        <CsvPreviewTable preview={state.preview} />
-      )}
-    </div>
+        {errorMessage ? (
+          <div
+            role="alert"
+            className="mt-4 flex items-start gap-3 rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive"
+          >
+            <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            <div className="space-y-1">
+              <p className="font-medium">File error</p>
+              <p className="text-xs text-destructive/90">{errorMessage}</p>
+            </div>
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
   );
 }
