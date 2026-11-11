@@ -3,6 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Gym Churn Prediction API"
     DATABASE_URL: str = "postgresql+psycopg://postgres:postgrespassword@localhost:5432/gym_churn"
+    REDIS_URL: str = "redis://localhost:6379/0"
     SECRET_KEY: str = "development_key"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
