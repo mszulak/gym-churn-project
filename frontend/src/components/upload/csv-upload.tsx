@@ -21,10 +21,9 @@ import {
   SessionExpiredError,
   redirectToSignout,
   uploadForAnalysis,
-  type AnalysisResult,
+  type UploadAnalysisResponse,
 } from "@/lib/analysis";
 import { CsvPreviewTable } from "./csv-preview-table";
-import { AnalysisResultCard } from "./analysis-result";
 
 type UploadState =
   | { status: "idle" }
@@ -32,31 +31,35 @@ type UploadState =
   | { status: "ready"; file: File; preview: CsvPreview }
   | { status: "error"; message: string; file?: File };
 
-type AnalysisState =
+type SendingState =
   | { status: "idle" }
   | { status: "sending" }
-  | { status: "done"; result: AnalysisResult }
+  | { status: "done" }
   | { status: "error"; message: string };
 
-export function CsvUpload() {
+interface CsvUploadProps {
+  onAnalysisCompleted?: (result: UploadAnalysisResponse) => void;
+}
+
+export function CsvUpload({ onAnalysisCompleted }: CsvUploadProps) {
   const inputId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const parseToken = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const [state, setState] = useState<UploadState>({ status: "idle" });
-  const [analysis, setAnalysis] = useState<AnalysisState>({ status: "idle" });
+  const [sending, setSending] = useState<SendingState>({ status: "idle" });
   const [isDragging, setIsDragging] = useState(false);
 
-  const cancelAnalysis = useCallback(() => {
+  const cancelSending = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
-    setAnalysis({ status: "idle" });
+    setSending({ status: "idle" });
   }, []);
 
   const handleFile = useCallback(
     async (file: File) => {
       const token = ++parseToken.current;
-      cancelAnalysis();
+      cancelSending();
 
       const validationError = validateCsvFile(file);
       if (validationError) {
@@ -67,7 +70,7 @@ export function CsvUpload() {
       setState({ status: "parsing", file });
       try {
         const preview = await parseCsvPreview(file);
-        if (token !== parseToken.current) return; // użytkownik wybrał w międzyczasie inny plik
+        if (token !== parseToken.current) return;
         setState({ status: "ready", file, preview });
       } catch (err) {
         if (token !== parseToken.current) return;
@@ -75,15 +78,15 @@ export function CsvUpload() {
         setState({ status: "error", message, file });
       }
     },
-    [cancelAnalysis],
+    [cancelSending],
   );
 
   const reset = useCallback(() => {
     parseToken.current++;
-    cancelAnalysis();
+    cancelSending();
     setState({ status: "idle" });
     if (inputRef.current) inputRef.current.value = "";
-  }, [cancelAnalysis]);
+  }, [cancelSending]);
 
   const analyze = useCallback(async () => {
     if (state.status !== "ready") return;
@@ -91,11 +94,12 @@ export function CsvUpload() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    setAnalysis({ status: "sending" });
+    setSending({ status: "sending" });
     try {
       const result = await uploadForAnalysis(state.file, controller.signal);
       if (controller.signal.aborted) return;
-      setAnalysis({ status: "done", result });
+      setSending({ status: "done" });
+      onAnalysisCompleted?.(result);
     } catch (err) {
       if (controller.signal.aborted) return;
       if (err instanceof SessionExpiredError) {
@@ -103,11 +107,11 @@ export function CsvUpload() {
         return;
       }
       const message = err instanceof Error ? err.message : "Nieznany błąd.";
-      setAnalysis({ status: "error", message });
+      setSending({ status: "error", message });
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
     }
-  }, [state]);
+  }, [state, onAnalysisCompleted]);
 
   const openFilePicker = () => inputRef.current?.click();
 
@@ -124,7 +128,6 @@ export function CsvUpload() {
   };
 
   const onDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
-    // ignoruj przejścia między elementami potomnymi
     if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
       setIsDragging(false);
     }
@@ -133,7 +136,7 @@ export function CsvUpload() {
   const hasFile = state.status === "ready" || state.status === "parsing";
 
   return (
-    <div className="flex w-full flex-col gap-6">
+    <div className="flex w-full flex-col gap-5">
       <input
         ref={inputRef}
         id={inputId}
@@ -144,7 +147,6 @@ export function CsvUpload() {
         onChange={(event) => {
           const file = event.target.files?.[0];
           if (file) void handleFile(file);
-          // pozwala ponownie wybrać ten sam plik
           event.target.value = "";
         }}
       />
@@ -165,7 +167,7 @@ export function CsvUpload() {
           onDragOver={onDragOver}
           onDragLeave={onDragLeave}
           className={cn(
-            "group relative flex flex-col items-center justify-center gap-6 overflow-hidden rounded-2xl border-2 border-dashed px-6 py-14 text-center transition-all outline-none sm:py-16",
+            "group relative flex flex-col items-center justify-center gap-5 overflow-hidden rounded-2xl border-2 border-dashed px-6 py-10 text-center transition-all outline-none sm:py-12",
             "bg-card/40 backdrop-blur-sm hover:border-primary/60 hover:bg-card/70",
             "focus-visible:border-primary focus-visible:ring-4 focus-visible:ring-primary/20",
             isDragging
@@ -175,16 +177,16 @@ export function CsvUpload() {
         >
           <div
             className={cn(
-              "flex size-20 items-center justify-center rounded-2xl bg-primary/10 text-primary ring-1 ring-primary/30 transition-transform",
+              "flex size-16 items-center justify-center rounded-2xl bg-primary/10 text-primary ring-1 ring-primary/30 transition-transform",
               "group-hover:scale-105",
               isDragging && "scale-110",
             )}
           >
-            <Upload className="size-9" strokeWidth={1.75} />
+            <Upload className="size-8" strokeWidth={1.75} />
           </div>
 
-          <div className="space-y-2">
-            <p className="text-xl font-semibold tracking-tight sm:text-2xl">
+          <div className="space-y-1.5">
+            <p className="text-lg font-semibold tracking-tight sm:text-xl">
               {isDragging ? "Upuść plik tutaj" : "Przeciągnij i upuść plik CSV"}
             </p>
             <p className="text-sm text-muted-foreground">
@@ -197,7 +199,7 @@ export function CsvUpload() {
             aria-hidden="true"
             className={cn(
               buttonVariants({ size: "lg" }),
-              "h-12 gap-2 rounded-xl px-8 text-base font-semibold shadow-lg shadow-primary/20 group-hover:bg-primary/90",
+              "h-11 gap-2 rounded-xl px-7 text-base font-semibold shadow-lg shadow-primary/20 group-hover:bg-primary/90",
             )}
           >
             <Upload className="size-5" />
@@ -206,7 +208,7 @@ export function CsvUpload() {
 
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <Lock className="size-3.5" />
-            Podgląd powstaje lokalnie — plik wysyłamy dopiero po kliknięciu „Analizuj”
+            Podgląd powstaje lokalnie — plik wysyłamy po kliknięciu „Analizuj”
           </p>
         </div>
       )}
@@ -262,7 +264,7 @@ export function CsvUpload() {
                 variant="outline"
                 size="lg"
                 onClick={openFilePicker}
-                disabled={analysis.status === "sending"}
+                disabled={sending.status === "sending"}
               >
                 <Upload />
                 Zmień plik
@@ -270,11 +272,11 @@ export function CsvUpload() {
               <Button
                 size="lg"
                 onClick={analyze}
-                disabled={state.status !== "ready" || analysis.status === "sending"}
-                aria-busy={analysis.status === "sending"}
+                disabled={state.status !== "ready" || sending.status === "sending"}
+                aria-busy={sending.status === "sending"}
                 className="gap-2"
               >
-                {analysis.status === "sending" ? (
+                {sending.status === "sending" ? (
                   <>
                     <Loader2 className="animate-spin" />
                     Analizowanie…
@@ -282,7 +284,7 @@ export function CsvUpload() {
                 ) : (
                   <>
                     <Sparkles />
-                    {analysis.status === "done" ? "Analizuj ponownie" : "Analizuj"}
+                    {sending.status === "done" ? "Analizuj ponownie" : "Analizuj"}
                   </>
                 )}
               </Button>
@@ -302,17 +304,17 @@ export function CsvUpload() {
         </Alert>
       )}
 
-      {analysis.status === "error" && (
+      {sending.status === "error" && (
         <Alert variant="destructive" className="border-destructive/40" aria-live="polite">
           <AlertCircle />
           <AlertTitle>Analiza nie powiodła się</AlertTitle>
-          <AlertDescription>{analysis.message}</AlertDescription>
+          <AlertDescription>{sending.message}</AlertDescription>
         </Alert>
       )}
 
-      {analysis.status === "done" && <AnalysisResultCard result={analysis.result} />}
-
-      {state.status === "ready" && <CsvPreviewTable preview={state.preview} />}
+      {state.status === "ready" && sending.status !== "done" && (
+        <CsvPreviewTable preview={state.preview} />
+      )}
     </div>
   );
 }
