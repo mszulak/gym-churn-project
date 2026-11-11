@@ -12,13 +12,19 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Card, CardContent } from "@/components/ui/card";
 import { uploadConfig } from "@/config/site";
 import { parseCsvPreview, validateCsvFile, type CsvPreview } from "@/lib/csv";
 import { describeDelimiter, formatFileSize, formatNumber } from "@/lib/format";
+import {
+  SessionExpiredError,
+  redirectToSignout,
+  uploadForAnalysis,
+  type AnalysisResult,
+} from "@/lib/analysis";
 import { CsvPreviewTable } from "./csv-preview-table";
+import { AnalysisResultCard } from "./analysis-result";
 
 type UploadState =
   | { status: "idle" }
@@ -26,39 +32,82 @@ type UploadState =
   | { status: "ready"; file: File; preview: CsvPreview }
   | { status: "error"; message: string; file?: File };
 
+type AnalysisState =
+  | { status: "idle" }
+  | { status: "sending" }
+  | { status: "done"; result: AnalysisResult }
+  | { status: "error"; message: string };
+
 export function CsvUpload() {
   const inputId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const parseToken = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
   const [state, setState] = useState<UploadState>({ status: "idle" });
+  const [analysis, setAnalysis] = useState<AnalysisState>({ status: "idle" });
   const [isDragging, setIsDragging] = useState(false);
 
-  const handleFile = useCallback(async (file: File) => {
-    const token = ++parseToken.current;
-
-    const validationError = validateCsvFile(file);
-    if (validationError) {
-      setState({ status: "error", message: validationError, file });
-      return;
-    }
-
-    setState({ status: "parsing", file });
-    try {
-      const preview = await parseCsvPreview(file);
-      if (token !== parseToken.current) return; // użytkownik wybrał w międzyczasie inny plik
-      setState({ status: "ready", file, preview });
-    } catch (err) {
-      if (token !== parseToken.current) return;
-      const message = err instanceof Error ? err.message : "Nieznany błąd.";
-      setState({ status: "error", message, file });
-    }
+  const cancelAnalysis = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setAnalysis({ status: "idle" });
   }, []);
+
+  const handleFile = useCallback(
+    async (file: File) => {
+      const token = ++parseToken.current;
+      cancelAnalysis();
+
+      const validationError = validateCsvFile(file);
+      if (validationError) {
+        setState({ status: "error", message: validationError, file });
+        return;
+      }
+
+      setState({ status: "parsing", file });
+      try {
+        const preview = await parseCsvPreview(file);
+        if (token !== parseToken.current) return; // użytkownik wybrał w międzyczasie inny plik
+        setState({ status: "ready", file, preview });
+      } catch (err) {
+        if (token !== parseToken.current) return;
+        const message = err instanceof Error ? err.message : "Nieznany błąd.";
+        setState({ status: "error", message, file });
+      }
+    },
+    [cancelAnalysis],
+  );
 
   const reset = useCallback(() => {
     parseToken.current++;
+    cancelAnalysis();
     setState({ status: "idle" });
     if (inputRef.current) inputRef.current.value = "";
-  }, []);
+  }, [cancelAnalysis]);
+
+  const analyze = useCallback(async () => {
+    if (state.status !== "ready") return;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    setAnalysis({ status: "sending" });
+    try {
+      const result = await uploadForAnalysis(state.file, controller.signal);
+      if (controller.signal.aborted) return;
+      setAnalysis({ status: "done", result });
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      if (err instanceof SessionExpiredError) {
+        redirectToSignout();
+        return;
+      }
+      const message = err instanceof Error ? err.message : "Nieznany błąd.";
+      setAnalysis({ status: "error", message });
+    } finally {
+      if (abortRef.current === controller) abortRef.current = null;
+    }
+  }, [state]);
 
   const openFilePicker = () => inputRef.current?.click();
 
@@ -157,7 +206,7 @@ export function CsvUpload() {
 
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <Lock className="size-3.5" />
-            Plik jest analizowany wyłącznie w Twojej przeglądarce
+            Podgląd powstaje lokalnie — plik wysyłamy dopiero po kliknięciu „Analizuj”
           </p>
         </div>
       )}
@@ -209,21 +258,33 @@ export function CsvUpload() {
                 <X />
                 Usuń
               </Button>
-              <Button variant="outline" size="lg" onClick={openFilePicker}>
+              <Button
+                variant="outline"
+                size="lg"
+                onClick={openFilePicker}
+                disabled={analysis.status === "sending"}
+              >
                 <Upload />
                 Zmień plik
               </Button>
               <Button
                 size="lg"
-                disabled
-                title="Analiza będzie dostępna po podłączeniu backendu"
+                onClick={analyze}
+                disabled={state.status !== "ready" || analysis.status === "sending"}
+                aria-busy={analysis.status === "sending"}
                 className="gap-2"
               >
-                <Sparkles />
-                Analizuj
-                <Badge variant="secondary" className="ml-1 h-4 px-1.5 text-[10px]">
-                  wkrótce
-                </Badge>
+                {analysis.status === "sending" ? (
+                  <>
+                    <Loader2 className="animate-spin" />
+                    Analizowanie…
+                  </>
+                ) : (
+                  <>
+                    <Sparkles />
+                    {analysis.status === "done" ? "Analizuj ponownie" : "Analizuj"}
+                  </>
+                )}
               </Button>
             </div>
           </CardContent>
@@ -240,6 +301,16 @@ export function CsvUpload() {
           </AlertDescription>
         </Alert>
       )}
+
+      {analysis.status === "error" && (
+        <Alert variant="destructive" className="border-destructive/40" aria-live="polite">
+          <AlertCircle />
+          <AlertTitle>Analiza nie powiodła się</AlertTitle>
+          <AlertDescription>{analysis.message}</AlertDescription>
+        </Alert>
+      )}
+
+      {analysis.status === "done" && <AnalysisResultCard result={analysis.result} />}
 
       {state.status === "ready" && <CsvPreviewTable preview={state.preview} />}
     </div>
