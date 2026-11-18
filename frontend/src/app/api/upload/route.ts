@@ -30,17 +30,29 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const file = incomingFormData.get("file");
-  if (!(file instanceof Blob)) {
-    return NextResponse.json(
-      { detail: "No CSV file was attached in the 'file' field." },
-      { status: 400 },
-    );
-  }
+  const requiredFileKeys = [
+    { key: "members_file", fallbackName: "members.csv", label: "Members Database" },
+    { key: "contracts_file", fallbackName: "contracts.csv", label: "Contracts History" },
+    { key: "check_ins_file", fallbackName: "check_ins.csv", label: "Gate Check-in Logs" },
+  ] as const;
 
   const outboundFormData = new FormData();
-  const fileName = file instanceof File && file.name ? file.name : "clients.csv";
-  outboundFormData.append("file", file, fileName);
+
+  for (const { key, fallbackName, label } of requiredFileKeys) {
+    const uploaded = incomingFormData.get(key);
+    if (!(uploaded instanceof Blob) || uploaded.size === 0) {
+      return NextResponse.json(
+        {
+          detail: `Missing or empty CSV file for '${key}' (${label}). Please upload all 3 required CSV files.`,
+        },
+        { status: 400 },
+      );
+    }
+
+    const fileName =
+      uploaded instanceof File && uploaded.name ? uploaded.name : fallbackName;
+    outboundFormData.append(key, uploaded, fileName);
+  }
 
   const backendUrl = `${getApiBaseUrl()}/api/upload`;
 

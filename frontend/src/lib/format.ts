@@ -12,11 +12,38 @@ export function formatInteger(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) {
     return "0";
   }
-  return integerFormatter.format(value);
+  return integerFormatter.format(Math.round(value));
+}
+
+export function formatDecimal(
+  value: number | null | undefined,
+  fractionDigits = 2,
+): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return "—";
+  }
+  return value.toLocaleString("en-US", {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  });
+}
+
+export function formatCurrencyPln(
+  value: number | null | undefined,
+  fractionDigits = 2,
+): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return "0.00 PLN";
+  }
+  const formatted = value.toLocaleString("en-US", {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  });
+  return `${formatted} PLN`;
 }
 
 /**
- * Formats a probability value (either `0.0–1.0` or `0–100`) as a percentage string.
+ * Formats a probability or ratio value (either `0.0–1.0` or `0–100`) as a percentage string.
  */
 export function formatProbabilityPercent(
   value: number | null | undefined,

@@ -10,10 +10,12 @@ import {
   Gauge,
   Loader2,
   Users,
+  Wallet,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
+  formatCurrencyPln,
   formatDateTime,
   formatInteger,
   formatProbabilityPercent,
@@ -46,8 +48,8 @@ export function AnalysesHistoryList({
             No previous analyses
           </p>
           <p className="max-w-md text-xs text-muted-foreground">
-            Once you upload your first CSV file above, it will automatically be
-            saved to your gym&apos;s history and appear here.
+            Once you upload your first 3-file club dataset above, it will
+            automatically be saved to your gym&apos;s history and appear here.
           </p>
         </CardContent>
       </Card>
@@ -61,6 +63,10 @@ export function AnalysesHistoryList({
         const isLoadingThis = item.id === loadingId;
         const inProgress = isAnalysisInProgress(item.status);
         const failed = isAnalysisFailed(item.status);
+
+        const activeMembersCount =
+          item.summary_kpis?.total_active_members ?? item.rows_count;
+        const actionableRev = item.summary_kpis?.actionable_revenue_at_risk_pln;
 
         return (
           <button
@@ -151,39 +157,56 @@ export function AnalysesHistoryList({
                   className="size-3.5 text-muted-foreground"
                   aria-hidden="true"
                 />
-                <span className="text-muted-foreground">Members:</span>
+                <span className="text-muted-foreground">Active members:</span>
                 <span className="font-mono font-semibold text-foreground">
-                  {inProgress && item.rows_count === 0
+                  {inProgress && activeMembersCount === 0
                     ? "—"
-                    : formatInteger(item.rows_count)}
+                    : formatInteger(activeMembersCount)}
                 </span>
               </div>
 
-              <div className="flex items-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-1.5 text-xs">
-                <AlertTriangle
-                  className="size-3.5 text-rose-400"
-                  aria-hidden="true"
-                />
-                <span className="text-rose-200/80">At-risk:</span>
-                <span className="font-mono font-semibold text-rose-300">
-                  {inProgress || failed
-                    ? "—"
-                    : formatInteger(item.high_risk_count)}
-                </span>
-              </div>
+              {actionableRev !== undefined ? (
+                <div className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs">
+                  <Wallet
+                    className="size-3.5 text-emerald-400"
+                    aria-hidden="true"
+                  />
+                  <span className="text-emerald-200/80">Recoverable:</span>
+                  <span className="font-mono font-semibold text-emerald-300">
+                    {inProgress || failed
+                      ? "—"
+                      : formatCurrencyPln(actionableRev)}
+                  </span>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs">
+                    <AlertTriangle
+                      className="size-3.5 text-amber-400"
+                      aria-hidden="true"
+                    />
+                    <span className="text-amber-200/80">Actionable:</span>
+                    <span className="font-mono font-semibold text-amber-300">
+                      {inProgress || failed
+                        ? "—"
+                        : formatInteger(item.high_risk_count)}
+                    </span>
+                  </div>
 
-              <div className="flex items-center gap-1.5 rounded-lg border border-border/70 bg-background/60 px-3 py-1.5 text-xs">
-                <Gauge
-                  className="size-3.5 text-amber-400"
-                  aria-hidden="true"
-                />
-                <span className="text-muted-foreground">Avg. risk:</span>
-                <span className="font-mono font-semibold text-foreground">
-                  {inProgress || failed
-                    ? "—"
-                    : formatProbabilityPercent(item.avg_churn_probability)}
-                </span>
-              </div>
+                  <div className="flex items-center gap-1.5 rounded-lg border border-border/70 bg-background/60 px-3 py-1.5 text-xs">
+                    <Gauge
+                      className="size-3.5 text-amber-400"
+                      aria-hidden="true"
+                    />
+                    <span className="text-muted-foreground">Avg. risk:</span>
+                    <span className="font-mono font-semibold text-foreground">
+                      {inProgress || failed
+                        ? "—"
+                        : formatProbabilityPercent(item.avg_churn_probability)}
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
           </button>
         );

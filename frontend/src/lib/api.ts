@@ -39,43 +39,128 @@ export interface UserResponse {
 export type AnalysisJobStatus =
   | "PENDING"
   | "PROCESSING"
+  | "STARTED"
+  | "SUCCESS"
   | "COMPLETED"
   | "FAILED"
+  | "FAILURE"
   | (string & {});
 
-export interface PredictionRecord {
-  id?: string;
-  client_index: number;
-  churn_probability: number;
-  uncertainty_low: number | null;
-  uncertainty_high: number | null;
-  predicted_days_to_churn: number | null;
-  raw_features: Record<string, unknown>;
+export type SegmentId =
+  | "behavioral_alarm"
+  | "hot_window"
+  | "zombie_zone"
+  | "strong_base"
+  | (string & {});
+
+export interface SummaryKpis {
+  total_active_members: number;
+  total_revenue_at_risk_pln: number;
+  actionable_revenue_at_risk_pln: number;
+  avg_club_lambda_base: number;
+  avg_club_tau_weeks: number;
+  vacation_prob: number;
+  model_roc_auc: number;
+  model_brier_score: number;
+}
+
+export type ClubPhysicsEffectType = "anchor" | "friction" | (string & {});
+
+export interface ClubPhysicsItem {
+  feature: string;
+  label: string;
+  effect_type: ClubPhysicsEffectType;
+  tau_multiplier: number;
+  description: string;
+}
+
+export interface SegmentSummaryItem {
+  segment_id: SegmentId;
+  segment_name: string;
+  client_amount: number;
+  average_lambda: number;
+  average_drop_ratio: number;
+  average_churn_risk: number;
+  revenue_at_risk: number;
+  recommended_action: string;
+}
+
+export interface WeeklyHistoryPoint {
+  t: number;
+  visits: number;
+}
+
+export interface ActiveMemberPrediction {
+  episode_id: number;
+  member_id: number | string;
+  segment_id: SegmentId;
+  segment_name: string;
+  is_fresh_drop: boolean;
+  observed_weeks: number;
+  weeks_to_contract_end: number;
+  lambda_base_est: number;
+  tau_est: number;
+  gamma_est: number;
+  lambda_today: number;
+  drop_ratio_today: number;
+  prob_churn_current: number;
+  monthly_price: number;
+  revenue_at_risk_pln: number;
+  weekly_history: WeeklyHistoryPoint[];
+}
+
+export interface HierarchicalAnalysisPayload {
+  summary_kpis: SummaryKpis;
+  club_physics: ClubPhysicsItem[];
+  segments_summary: SegmentSummaryItem[];
+  active_members: ActiveMemberPrediction[];
 }
 
 export interface AnalysisSummaryItem {
   id: string;
+  task_id?: string;
+  job_id?: string;
   filename: string;
   status: AnalysisJobStatus;
   rows_count: number;
   high_risk_count: number;
   avg_churn_probability: number;
   created_at: string;
+  summary_kpis?: Partial<SummaryKpis>;
 }
 
 /**
- * Response returned by `POST /api/upload` (202 Accepted `AnalysisJobPublic`),
- * with optional fallback fields for legacy responses.
+ * Response returned by `POST /api/upload` (202 Accepted),
+ * preserving `id` / `task_id` / `job_id` and `status`.
  */
-export interface UploadAnalysisResponse extends AnalysisSummaryItem {
+export interface UploadAnalysisResponse extends Partial<AnalysisSummaryItem> {
+  id?: string;
+  task_id?: string;
   job_id?: string;
-  rows?: number;
-  columns?: string[];
-  top_10_risk?: Array<Record<string, unknown>>;
+  filename?: string;
+  status?: AnalysisJobStatus;
+  result?: HierarchicalAnalysisPayload | Record<string, unknown>;
+  predictions?: HierarchicalAnalysisPayload | unknown;
+  summary_kpis?: SummaryKpis;
+  club_physics?: ClubPhysicsItem[];
+  segments_summary?: SegmentSummaryItem[];
+  active_members?: ActiveMemberPrediction[];
 }
 
-export interface AnalysisDetailResponse extends AnalysisSummaryItem {
-  predictions?: PredictionRecord[];
+export interface AnalysisDetailResponse extends Partial<AnalysisSummaryItem> {
+  id?: string;
+  task_id?: string;
+  job_id?: string;
+  filename?: string;
+  status: AnalysisJobStatus;
+  result?: HierarchicalAnalysisPayload | Record<string, unknown>;
+  results?: HierarchicalAnalysisPayload | Record<string, unknown>;
+  data?: HierarchicalAnalysisPayload | Record<string, unknown>;
+  predictions?: HierarchicalAnalysisPayload | unknown;
+  summary_kpis?: SummaryKpis;
+  club_physics?: ClubPhysicsItem[];
+  segments_summary?: SegmentSummaryItem[];
+  active_members?: ActiveMemberPrediction[];
 }
 
 export class ApiError extends Error {

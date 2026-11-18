@@ -1,14 +1,13 @@
-import json
 import os
+import shutil
 import uuid
-import joblib
-import pandas as pd
 from celery import Celery
 from sqlmodel import Session
 
 from app.core.config import settings
 from app.db.models import AnalysisJob, ClientPrediction
 from app.db.session import engine
+from app.ml.habit_engine import run_habit_churn_pipeline
 
 celery_app = Celery(
     "gym_churn_worker",
@@ -16,7 +15,6 @@ celery_app = Celery(
     backend=settings.REDIS_URL,
 )
 
-MODEL_PATH = "app/ml/models/gym_churn_baseline.joblib"
 
 @celery_app.task(name="run_churn_analysis")
 def run_churn_analysis_task(job_id_str: str) -> dict:
@@ -29,66 +27,43 @@ def run_churn_analysis_task(job_id_str: str) -> dict:
             return {"error": f"Job {job_id_str} not found in database"}
 
         try:
-            try:
-                model = joblib.load(MODEL_PATH)
-                print("Worker: Model loaded successfully")
-            except Exception as e:
-                model = None
-                print(f"Worker: Model loading error: {e}")
-
             job.status = "PROCESSING"
             session.add(job)
             session.commit()
 
-            if model is None:
-                raise RuntimeError("Model not accessible in worker")
-
             if not os.path.exists(job.file_path):
-                raise FileNotFoundError(f"Lack of CSV file: {job.file_path}")
+                raise FileNotFoundError(f"Lack of upload directory: {job.file_path}")
 
-            df: pd.DataFrame = pd.read_csv(job.file_path)
-            df_features = df.copy()
+            result = run_habit_churn_pipeline(job.file_path)
+            active_members = result["active_members"]
 
-            if "Churn" in df_features.columns:
-                df_features = df_features.drop(columns=["Churn"])
-
-            df_features["frequency_delta"] = (
-                df_features["Avg_class_frequency_current_month"]
-                - df_features["Avg_class_frequency_total"]
-            )
-            df_features = df_features.drop(
-                columns=["Month_to_end_contract", "Avg_class_frequency_total"],
-                errors="ignore",
-            )
-
-            probabilities = model.predict_proba(df_features)[:, 1]
-            df["client_index"] = df.index
-            df["churn_probability"] = probabilities
-
-            df["uncertainty_low"] = (df["churn_probability"] - 0.08).clip(0.0, 1.0).round(4)
-            df["uncertainty_high"] = (df["churn_probability"] + 0.08).clip(0.0, 1.0).round(4)
-            df["predicted_days_to_churn"] = ((1.0 - df["churn_probability"]) * 90).astype(int)
-
-            df_sorted = df.sort_values(by="churn_probability", ascending=False)
-
-            records = json.loads(df_sorted.to_json(orient="records"))
             predictions_to_save = [
                 ClientPrediction(
                     job_id=job_id,
-                    client_index=record["client_index"],
-                    churn_probability=round(float(record["churn_probability"]), 4),
-                    uncertainty_low=record["uncertainty_low"],
-                    uncertainty_high=record["uncertainty_high"],
-                    predicted_days_to_churn=record["predicted_days_to_churn"],
-                    raw_features=record,
+                    client_index=member["member_id"],
+                    churn_probability=member["prob_churn_current"],
+                    uncertainty_low=member["uncertainty_low"],
+                    uncertainty_high=member["uncertainty_high"],
+                    predicted_days_to_churn=member["predicted_days_to_churn"],
+                    raw_features=member,
                 )
-                for record in records
+                for member in active_members
             ]
             session.add_all(predictions_to_save)
 
-            job.rows_count = int(df.shape[0])
-            job.high_risk_count = int((df["churn_probability"] >= 0.5).sum())
-            job.avg_churn_probability = round(float(df["churn_probability"].mean()), 4)
+            job.rows_count = result["summary_kpis"]["total_active_members"]
+            job.high_risk_count = sum(
+                1 for m in active_members if m["segment_id"] in ("behavioral_alarm", "zombie_zone")
+            )
+            job.avg_churn_probability = round(
+                float(sum(m["prob_churn_current"] for m in active_members) / max(len(active_members), 1)),
+                4,
+            )
+            job.report_data = {
+                "summary_kpis": result["summary_kpis"],
+                "club_physics": result["club_physics"],
+                "segments_summary": result["segments_summary"],
+            }
             job.status = "COMPLETED"
             session.add(job)
             session.commit()
@@ -106,7 +81,4 @@ def run_churn_analysis_task(job_id_str: str) -> dict:
 
         finally:
             if os.path.exists(job.file_path):
-                try:
-                    os.remove(job.file_path)
-                except OSError:
-                    pass
+                shutil.rmtree(job.file_path, ignore_errors=True)

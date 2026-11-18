@@ -50,6 +50,7 @@ class AnalysisJob(SQLModel, table=True):
     rows_count: int = Field(default=0)
     high_risk_count: int = Field(default=0)
     avg_churn_probability: float = Field(default=0.0)
+    report_data: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class ClientPrediction(SQLModel, table=True):
@@ -89,5 +90,9 @@ class ClientPredictionPublic(SQLModel):
 
 
 class AnalysisJobDetail(AnalysisJobPublic):
-    """Full view of analysis with list of high risk clients"""
-    predictions: list[ClientPredictionPublic]
+    """Full view of analysis with hierarchical habit insights and client predictions"""
+    summary_kpis: dict[str, Any] = Field(default_factory=dict)
+    club_physics: list[dict[str, Any]] = Field(default_factory=list)
+    segments_summary: list[dict[str, Any]] = Field(default_factory=list)
+    active_members: list[dict[str, Any]] = Field(default_factory=list)
+    predictions: list[ClientPredictionPublic] = Field(default_factory=list)
