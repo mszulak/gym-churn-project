@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 import {
   AlertCircle,
   History,
+  LayoutDashboard,
   Loader2,
-  ShieldAlert,
   Upload,
 } from "lucide-react";
 import { AUTH_ROUTES } from "@/lib/auth/constants";
@@ -19,6 +19,7 @@ import {
   fromAnalysisDetail,
   fromUploadResponse,
   isAnalysisInProgress,
+  normalizeHistoryList,
   type ActiveAnalysisView,
 } from "@/lib/analysis";
 import { Card, CardContent } from "@/components/ui/card";
@@ -64,9 +65,7 @@ export function AnalysisWorkspace() {
         return;
       }
 
-      const list = Array.isArray(payload)
-        ? (payload as AnalysisSummaryItem[])
-        : [];
+      const list = normalizeHistoryList(payload);
       setHistoryError(null);
       setHistory(list);
     } catch {
@@ -150,9 +149,7 @@ export function AnalysisWorkspace() {
           return;
         }
 
-        const list = Array.isArray(listPayload)
-          ? (listPayload as AnalysisSummaryItem[])
-          : [];
+        const list = normalizeHistoryList(listPayload);
         setHistory(list);
 
         if (list.length > 0) {
@@ -198,7 +195,7 @@ export function AnalysisWorkspace() {
   const activeId = activeAnalysis?.id ?? null;
   const activeStatus = activeAnalysis?.status ?? null;
 
-  // Poll `GET /api/analyses/{id}` every 1.5s while the active analysis is PENDING or PROCESSING.
+  // Poll `GET /api/analyses/{id}` every 1.5s while the active analysis is in progress.
   useEffect(() => {
     if (!activeId || !isAnalysisInProgress(activeStatus)) {
       return;
@@ -247,19 +244,20 @@ export function AnalysisWorkspace() {
 
         setHistory((prev) =>
           prev.map((item) =>
-            item.id === detail.id
+            item.id === nextView.id
               ? {
                   ...item,
-                  status: detail.status,
-                  rows_count: detail.rows_count,
-                  high_risk_count: detail.high_risk_count,
-                  avg_churn_probability: detail.avg_churn_probability,
+                  status: nextView.status,
+                  rows_count: nextView.rowsCount,
+                  high_risk_count: nextView.highRiskCount,
+                  avg_churn_probability: nextView.avgChurnProbability,
+                  summary_kpis: nextView.payload?.summary_kpis ?? item.summary_kpis,
                 }
               : item,
           ),
         );
 
-        if (!isAnalysisInProgress(detail.status)) {
+        if (!isAnalysisInProgress(nextView.status)) {
           clearInterval(intervalId);
           void refreshHistoryList();
         }
@@ -291,6 +289,7 @@ export function AnalysisWorkspace() {
           high_risk_count: mapped.highRiskCount,
           avg_churn_probability: mapped.avgChurnProbability,
           created_at: mapped.createdAt ?? nowIso,
+          summary_kpis: mapped.payload?.summary_kpis,
         };
         const filtered = prev.filter((item) => item.id !== mapped.id);
         return [summaryItem, ...filtered];
@@ -316,11 +315,12 @@ export function AnalysisWorkspace() {
               id="upload-heading"
               className="font-heading text-lg font-bold tracking-tight text-foreground sm:text-xl"
             >
-              Upload CSV File
+              Upload Club Cohort Data (3 CSV Files)
             </h1>
             <p className="text-xs text-muted-foreground">
-              Upload a CSV export with your gym members to calculate churn
-              predictions and save the result to the database.
+              Upload your Members Database, Contracts History, and Gate Check-in
+              Logs to train the hierarchical Bayesian habit model (NumPyro SVI)
+              and separate behavioral habit decay from contract expiration.
             </p>
           </div>
         </div>
@@ -334,19 +334,20 @@ export function AnalysisWorkspace() {
 
       <section aria-labelledby="active-analysis-heading" className="space-y-3">
         <div className="flex items-center gap-2.5">
-          <span className="flex size-8 items-center justify-center rounded-lg bg-rose-500/15 text-rose-400 ring-1 ring-rose-500/30">
-            <ShieldAlert className="size-4" aria-hidden="true" />
+          <span className="flex size-8 items-center justify-center rounded-lg bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/30">
+            <LayoutDashboard className="size-4" aria-hidden="true" />
           </span>
           <div>
             <h2
               id="active-analysis-heading"
               className="font-heading text-lg font-bold tracking-tight text-foreground sm:text-xl"
             >
-              Selected Analysis — Top 10 At-Risk Members
+              Operational Habit &amp; Churn Dashboard
             </h2>
             <p className="text-xs text-muted-foreground">
-              Summary of the selected analysis along with churn probability,
-              uncertainty intervals, and estimated days to churn.
+              Executive club KPIs, interactive operational segments, individual
+              &ldquo;Plateau &amp; Slide&rdquo; habit trajectories, and learned
+              club physics.
             </p>
           </div>
         </div>
@@ -358,7 +359,7 @@ export function AnalysisWorkspace() {
                 className="size-4 animate-spin text-primary"
                 aria-hidden="true"
               />
-              <span>Loading latest analysis...</span>
+              <span>Loading latest operational dashboard...</span>
             </CardContent>
           </Card>
         ) : activeAnalysis ? (
@@ -376,8 +377,8 @@ export function AnalysisWorkspace() {
                 No analysis selected
               </p>
               <p className="max-w-md text-xs text-muted-foreground">
-                Upload a CSV file above or select one of your previous analyses
-                from the list below to see the Top 10 most at-risk members.
+                Upload all 3 CSV files above or select a previous run from your
+                history below to open the Operational Dashboard.
               </p>
             </CardContent>
           </Card>
@@ -398,8 +399,8 @@ export function AnalysisWorkspace() {
                 Previous Analyses
               </h2>
               <p className="text-xs text-muted-foreground">
-                Click any analysis from the history to load its Top 10 table
-                above.
+                Select any historical model run to inspect its segments, member
+                habit curves, and revenue at risk.
               </p>
             </div>
           </div>

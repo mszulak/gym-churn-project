@@ -6,74 +6,82 @@ Analytical system based on Bayesian statistics and machine learning, designed fo
 
 The project is built in a monorepo architecture, enforcing a strict separation of concerns between the user interface, REST API, database persistence, and asynchronous ML inference:
 
-- **Frontend:** Next.js (App Router), React, TypeScript & Tailwind CSS (`shadcn/ui`).
+- **Frontend:** Next.js (App Router), React, TypeScript & Tailwind CSS (shadcn/ui).
 - **Backend:** FastAPI / Python 3.12 (REST API, JWT authentication with Argon2 password hashing).
 - **Database & ORM:** PostgreSQL 16 with SQLModel (SQLAlchemy 2.0 + Pydantic v2).
 - **Task Queue & Broker:** Celery + Redis (asynchronous background processing of CSV uploads and ML inference).
-- **Machine Learning:** `scikit-learn` (`joblib`) as the end-to-end pipeline baseline, with prepared schema support (uncertainty intervals & time-to-churn) for the target Bayesian model in **NumPyro**.
+- **Machine Learning:** Hierarchical Bayesian habit decay model in **NumPyro / JAX** (Zero-Inflated Poisson with SVI inference) combined with a **scikit-learn** contract renewal decision engine.
 - **Environment Management:** `uv` (Rust-based Python package manager).
 - **Infrastructure:** Docker & Docker Compose (full multi-container orchestration).
 
 ## Project Structure
 
-```text
-gym-churn-project/
-├── frontend/                  # Next.js web application
-│   ├── src/                   # UI components, Server Actions, Route Handlers & auth proxy
-│   ├── Dockerfile             # Frontend container definition
-│   └── package.json           # Node.js dependencies
-├── backend/                   # Analytical server and ML worker environment
-│   ├── app/                   # Backend source code
-│   │   ├── api/               # REST endpoints (auth, CSV upload, analysis history) & dependencies
-│   │   ├── core/              # Settings configuration and security (JWT, Argon2)
-│   │   ├── db/                # Database session and SQLModel table/schema definitions
-│   │   ├── ml/                # Data validation and serialized ML models
-│   │   ├── worker/            # Celery worker configuration and background inference tasks
-│   │   └── main.py            # FastAPI application entry point
-│   ├── Dockerfile             # Lightweight Python image built with uv
-│   ├── pyproject.toml         # Python dependencies definition
-│   └── uv.lock                # Lockfile guaranteeing environment reproducibility
-├── local_storage/             # Shared volume buffer for temporary CSV file processing
-├── notebooks/                 # Jupyter notebooks for EDA, research, and Bayesian prototyping
-├── docker-compose.yml         # Multi-container orchestration (db, redis, backend, worker, frontend)
-└── README.md                  # Main project documentation
-```
+    gym-churn-project/
+    ├── frontend/                  # Next.js web application
+    │   ├── src/                   # UI components, Server Actions, Route Handlers & auth proxy
+    │   ├── Dockerfile             # Frontend container definition
+    │   └── package.json           # Node.js dependencies
+    ├── backend/                   # Analytical server and ML worker environment
+    │   ├── app/                   # Backend source code
+    │   │   ├── api/               # REST endpoints (auth, CSV upload, analysis history) & dependencies
+    │   │   ├── core/              # Settings configuration and security (JWT, Argon2)
+    │   │   ├── db/                # Database session and SQLModel table/schema definitions
+    │   │   ├── ml/                # NumPyro SVI habit engine and churn segmentation pipeline
+    │   │   ├── worker/            # Celery worker configuration and background inference tasks
+    │   │   └── main.py            # FastAPI application entry point
+    │   ├── data/
+    │   │   └── synthetic_raw/     # Sample relational CSV files (members, contracts, check_ins)
+    │   ├── Dockerfile             # Lightweight Python image built with uv
+    │   ├── pyproject.toml         # Python dependencies definition
+    │   └── uv.lock                # Lockfile guaranteeing environment reproducibility
+    ├── local_storage/             # Shared volume buffer for temporary CSV file processing
+    ├── notebooks/                 # Jupyter notebooks for EDA, research, and Bayesian prototyping
+    ├── docker-compose.yml         # Multi-container orchestration (db, redis, backend, worker, frontend)
+    └── README.md                  # Main project documentation
 
-## Project Status (Pre-MVP Complete)
+## Project Status (MVP Complete)
 
 Currently implemented:
 - **Full Containerized Infrastructure:** Orchestrated PostgreSQL, Redis, FastAPI backend, Celery worker, and Next.js frontend via Docker Compose.
-- **Authentication & Multi-Tenancy:** End-to-end registration and login system for gym owners using JWT and `HttpOnly` cookies.
-- **Asynchronous Analysis Pipeline:** Non-blocking CSV uploads queued via Redis and processed in the background by Celery workers with automatic temporary file cleanup.
-- **Persistence & History Dashboard:** Full database storage of analysis jobs and member-level predictions (probabilities, uncertainty bounds, estimated days to churn) with real-time frontend status polling.
+- **Authentication & Multi-Tenancy:** End-to-end registration and login system for gym owners using JWT and HttpOnly cookies.
+- **Asynchronous Analysis Pipeline:** Non-blocking 3-file CSV uploads (`members.csv`, `contracts.csv`, `check_ins.csv`) queued via Redis and processed in the background by Celery workers with automatic temporary file cleanup.
+- **Hierarchical Bayesian Inference (NumPyro SVI):** Automated gate log cleaning (<45 min filter), weekly attendance grid reconstruction, and live Stochastic Variational Inference (`AutoNormal`) estimating individual habit trajectories (`lambda_base`, `tau`, `gamma`) and club-level anchors/frictions.
+- **Operational Retention Dashboard:** Full database storage and interactive visualization of executive KPIs, 4 retention segments (Behavioral Alarm, Hot Window, Zombie Zone, Strong Base), Revenue at Risk (PLN), and individual member habit curves.
 
-Next steps (Research & Modeling Phase):
-- Developing and validating the hierarchical Bayesian / survival churn model in **NumPyro**.
-- Replacing the baseline `joblib` estimator in the Celery worker with live MCMC/SVI inference.
+Next steps:
+- Expanding automated unit and integration test coverage (`pytest` + GitHub Actions CI).
+- Temporal backtesting (out-of-time validation) and hyperparameter tuning.
 
 ## How to Run
 
 ### Option 1: Full Docker Stack (Recommended)
+
 To launch the entire system (PostgreSQL, Redis, FastAPI, Celery Worker, and Next.js Frontend) with a single command:
 
-```bash
-docker compose up --build
-```
+    docker compose up --build
 
 Once all containers are running:
 - **Web Application (Frontend):** http://localhost:3000
 - **API Documentation (Swagger UI):** http://localhost:8000/docs
 
 ### Option 2: Hybrid Development Mode (Docker Backend + Local Frontend)
+
 If you want to work on the Next.js frontend locally with instant hot-reload:
 
 1. Start the backend infrastructure in Docker:
-   ```bash
-   docker compose up -d db redis backend worker
-   ```
+
+       docker compose up -d db redis backend worker
+
 2. Run the Next.js development server locally:
-   ```bash
-   cd frontend
-   npm install
-   npm run dev
-   ```
+
+       cd frontend
+       npm install
+       npm run dev
+
+## Testing with Sample Data
+
+The repository includes sample relational data in `backend/data/synthetic_raw/` (`members.csv`, `contracts.csv`, `check_ins.csv`) to test the pipeline out of the box:
+
+1. Open http://localhost:3000, register an account, and log in.
+2. Upload `members.csv`, `contracts.csv`, and `check_ins.csv` from `backend/data/synthetic_raw/` into their corresponding slots and click **Run Hierarchical Churn Analysis**.
+3. Wait ~30 seconds for the Celery worker to complete the SVI inference and explore the segments and individual habit curves on the dashboard.

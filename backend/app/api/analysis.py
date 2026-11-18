@@ -1,11 +1,9 @@
 import io
-import json
 import os
 import uuid
-import joblib
 import pandas as pd
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from sqlmodel import Session, select, col
+from sqlmodel import Session, col, select
 
 from app.api.deps import get_current_user
 from app.db.models import (
@@ -23,31 +21,62 @@ router = APIRouter(prefix="/api", tags=["analysis"])
 
 STORAGE_DIR = "local_storage/uploads"
 
+REQUIRED_COLUMNS = {
+    "members.csv": {"member_id", "age", "distance_km", "promo_friends", "partners_company"},
+    "contracts.csv": {"contract_id", "member_id", "start_date", "end_date", "duration_months", "monthly_price", "status"},
+    "check_ins.csv": {"member_id", "timestamp", "is_group_class", "additional_spend"},
+}
+
+
 @router.post("/upload", response_model=AnalysisJobPublic, status_code=status.HTTP_202_ACCEPTED)
 async def upload_csv(
-    file: UploadFile = File(...),
+    members_file: UploadFile = File(...),
+    contracts_file: UploadFile = File(...),
+    check_ins_file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    if not file.filename or not file.filename.endswith(".csv"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Program expectcs file with .csv extension",
-        )
+    uploaded_map = {
+        "members.csv": members_file,
+        "contracts.csv": contracts_file,
+        "check_ins.csv": check_ins_file,
+    }
 
-    contents = await file.read()
-
-    os.makedirs(STORAGE_DIR, exist_ok=True)
     job_id = uuid.uuid4()
-    file_path = os.path.join(STORAGE_DIR, f"{job_id}.csv")
-    with open(file_path, "wb") as f:
-        f.write(contents)
+    job_dir = os.path.join(STORAGE_DIR, str(job_id))
+    os.makedirs(job_dir, exist_ok=True)
 
+    for target_name, up_file in uploaded_map.items():
+        if not up_file.filename or not up_file.filename.endswith(".csv"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Plik dla {target_name} musi mieć rozszerzenie .csv",
+            )
+        contents = await up_file.read()
+        try:
+            header_df = pd.read_csv(io.BytesIO(contents), nrows=1)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Nie udało się odczytać pliku {up_file.filename} jako CSV",
+            ) from exc
+
+        missing = REQUIRED_COLUMNS[target_name] - set(header_df.columns)
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"W pliku {up_file.filename} ({target_name}) brakuje wymaganych kolumn: {sorted(missing)}",
+            )
+
+        with open(os.path.join(job_dir, target_name), "wb") as f:
+            f.write(contents)
+
+    display_name = f"{members_file.filename} + {contracts_file.filename} + {check_ins_file.filename}"
     new_job = AnalysisJob(
         id=job_id,
         user_id=current_user.id,
-        filename=file.filename,
-        file_path=file_path,
+        filename=display_name[:255],
+        file_path=job_dir,
         status="PENDING",
     )
     session.add(new_job)
@@ -89,11 +118,15 @@ def get_analysis_detail(
         select(ClientPrediction)
         .where(ClientPrediction.job_id == job_id)
         .order_by(col(ClientPrediction.churn_probability).desc())
-        .limit(10)
     )
     predictions = session.exec(predictions_stmt).all()
+    report_data = job.report_data or {}
 
     return AnalysisJobDetail(
         **job.model_dump(),
+        summary_kpis=report_data.get("summary_kpis", {}),
+        club_physics=report_data.get("club_physics", []),
+        segments_summary=report_data.get("segments_summary", []),
+        active_members=[p.raw_features for p in predictions if p.raw_features],
         predictions=[ClientPredictionPublic(**p.model_dump()) for p in predictions],
     )
